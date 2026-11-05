@@ -1,0 +1,10 @@
+.env
+.venv/
+.runtime/
+var/tasks/
+frontend/node_modules/
+assets/*.pdf
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
