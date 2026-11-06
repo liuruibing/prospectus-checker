@@ -5,10 +5,20 @@ import os
 import shutil
 import tempfile
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 
 from langchain_openai import ChatOpenAI
+
+
+class ModelText(str):
+    metrics: dict[str, Any]
+
+    def __new__(cls, text: str, metrics: dict[str, Any]):
+        value = super().__new__(cls, text)
+        value.metrics = metrics
+        return value
 
 
 class LangChainProvider:
@@ -18,7 +28,13 @@ class LangChainProvider:
         self.base_url = os.getenv("LLM_BASE_URL", "").strip().rstrip("/")
         self.api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
         self.model_name = os.getenv("LLM_MODEL", "").strip()
-        self.timeout = float(os.getenv("PROSPECTUS_LLM_TIMEOUT_SECONDS", "180"))
+        self.timeout = float(os.getenv("PROSPECTUS_LLM_TIMEOUT_SECONDS", "360"))
+        self._model = None
+        self._slots = asyncio.Semaphore(max(1, int(os.getenv("PROSPECTUS_MODEL_CONCURRENCY", "3"))))
+
+    @property
+    def cache_namespace(self) -> dict[str, Any]:
+        return {"provider": type(self).__name__, "url": self.base_url, "model": self.model_name, "temperature": 0}
 
     def require_configured(self) -> None:
         missing = [
@@ -31,25 +47,37 @@ class LangChainProvider:
 
     def build_model(self) -> ChatOpenAI:
         self.require_configured()
-        return ChatOpenAI(
+        if self._model is not None:
+            return self._model
+        self._model = ChatOpenAI(
             model=self.model_name,
             base_url=self.base_url,
             api_key=self.api_key or "not-required",
             temperature=0,
             timeout=self.timeout,
-            max_retries=int(os.getenv("LLM_NETWORK_RETRIES", "3")),
+            max_retries=int(os.getenv("LLM_NETWORK_RETRIES", "1")),
         )
+        return self._model
 
     async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
-        response = await self.build_model().ainvoke([
-            ("system", system_prompt),
-            ("user", user_prompt),
-        ])
+        queued = time.monotonic()
+        async with self._slots:
+            started = time.monotonic()
+            response = await asyncio.wait_for(self.build_model().ainvoke([
+                ("system", system_prompt),
+                ("user", user_prompt),
+            ]), timeout=self.timeout)
         content: Any = getattr(response, "content", "")
         text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
         if not text.strip():
             raise RuntimeError("AI_INVALID_RESPONSE: empty message content")
-        return text
+        metadata = getattr(response, "response_metadata", {}) or {}
+        return ModelText(text, {
+            "queue_ms": round((started - queued) * 1000),
+            "request_ms": round((time.monotonic() - started) * 1000),
+            "usage": getattr(response, "usage_metadata", None),
+            "finish_reason": metadata.get("finish_reason"),
+        })
 
 
 class OMPProvider:
@@ -58,7 +86,7 @@ class OMPProvider:
     def __init__(self) -> None:
         self.command = os.getenv("PROSPECTUS_OMP_COMMAND", "omp").strip() or "omp"
         self.model_name = os.getenv("PROSPECTUS_OMP_MODEL", "openai-codex/gpt-6-luna").strip()
-        self.timeout = float(os.getenv("PROSPECTUS_LLM_TIMEOUT_SECONDS", "180"))
+        self.timeout = float(os.getenv("PROSPECTUS_LLM_TIMEOUT_SECONDS", "360"))
 
     def require_configured(self) -> None:
         if not shutil.which(self.command):
@@ -76,7 +104,7 @@ class OMPProvider:
                 prompt_file.write(user_prompt)
                 prompt_path = Path(prompt_file.name)
 
-            process = await asyncio.create_subprocess_exec(
+            command = [
                 self.command,
                 "--print",
                 "--no-session",
@@ -87,6 +115,9 @@ class OMPProvider:
                 "--model", self.model_name,
                 "--system-prompt", system_prompt,
                 f"@{prompt_path}",
+            ]
+            process = await asyncio.create_subprocess_exec(
+                *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

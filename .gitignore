@@ -2,6 +2,7 @@
 .venv/
 .runtime/
 var/tasks/
+var/cache/
 frontend/node_modules/
 assets/*.pdf
 __pycache__/

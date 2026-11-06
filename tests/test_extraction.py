@@ -33,6 +33,9 @@ def test_industry_total_accepts_located_metrics_without_row_bbox(monkeypatch):
             }],
         },
         rule=rule,
+        rule_text=rule["file"].read_text(encoding="utf-8"),
+        source_pages=set(),
+        section_markdown="",
         table_cache={},
         header_maps={},
     )
@@ -134,39 +137,26 @@ def test_anydoc_section_prefers_body_over_contents_and_stops_at_next_peer_headin
     assert "后续章节内容" not in section
 
 
-def test_analyze_document_sends_aggregated_chapter_and_page_sources_to_provider():
+def test_analyze_document_scopes_requests_and_never_accepts_false_missing_source_rows():
     pdf_path = Path("assets/易方达上证50交易型开放式指数证券投资基金2025年第4季度报告.pdf")
-    raw = {
-        "document_info": {},
-        "modules": [
-            {"rule_id": rule["rule_id"], "found": False, "scope": {}, "rows": []}
-            for rule in MODULE_RULES
-        ],
-    }
 
     class RecordingProvider:
-        user_prompt = ""
+        prompts = []
 
         async def generate_text(self, system_prompt, user_prompt):
-            self.user_prompt = user_prompt
-            return json.dumps(raw, ensure_ascii=False)
+            self.prompts.append(user_prompt)
+            return json.dumps({"found": False, "rows": []})
 
     provider = RecordingProvider()
-    asyncio.run(extraction.analyze_document(
-        filename=pdf_path.name,
-        content=pdf_path.read_bytes(),
-        role="periodic_report",
-        provider=provider,
+    result = asyncio.run(extraction.analyze_document(
+        filename=pdf_path.name, content=pdf_path.read_bytes(), role="periodic_report", provider=provider,
     ))
-
-    prompt = provider.user_prompt
-    assert "【章节：investment.asset_allocation】" in prompt
-    assert "[章节归集内容，包含跨页正文、表格和表注" in prompt
-    assert "买断式回购的买入返售金融资产" in prompt
-    assert "【章节：investment.industry_stock_portfolio】" in prompt
-    assert "[PHYSICAL PAGE 8]" in prompt
-    assert "[PHYSICAL PAGE 9]" in prompt
-
+    assert len(provider.prompts) == 6  # Each incomplete chapter gets one isolated retry.
+    for rule in MODULE_RULES:
+        matching = [prompt for prompt in provider.prompts if f"模块：{rule['rule_id']}。" in prompt]
+        assert len(matching) == 2
+        assert all("【PDF 源表行】" in prompt for prompt in matching)
+    assert all(module["status"] == "UNRESOLVED_STRUCTURE" for module in result["modules"])
 
 
 

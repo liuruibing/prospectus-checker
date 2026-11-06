@@ -11,6 +11,8 @@ from langgraph.graph import END, START, StateGraph
 
 from app.comparison import compare_documents
 from app.extraction import analyze_document
+from app.preflight import preflight_documents
+from app.pdf_worker import run_pdf
 
 
 @dataclass
@@ -97,6 +99,7 @@ class WorkflowEngine:
 class ComparisonState(TypedDict, total=False):
     context: Any
     payload: dict[str, Any]
+    preflight: dict[str, Any]
     prospectus: dict[str, Any]
     periodic_report: dict[str, Any]
     result: dict[str, Any]
@@ -173,6 +176,80 @@ class InvestmentComparisonWorkflow:
                 payload = await _load_base_documents(context)
             return {"payload": payload}
 
+        async def preflight(state: ComparisonState) -> dict[str, Any]:
+            context, payload = state["context"], state["payload"]
+            get_stream_writer()({
+                "event": "workflow.progress",
+                "data": {"runId": getattr(context, "run_id", None), "stage": "preflight", "step_status": "running", "message": "正在检查产品身份和文件日期"},
+            })
+            result = await run_pdf(preflight_documents, payload)
+            trace_callback = getattr(context, "trace_callback", None)
+            if trace_callback:
+                trace_callback({"kind": "artifact", "path": "preflight/metadata.json", "content": result})
+                trace_callback({
+                    "kind": "event",
+                    "event": "document_preflight_completed",
+                    "details": {
+                        "status": result["status"],
+                        "blocked": result["blocked"],
+                        "date_gap_days": result["date_gap_days"],
+                        "max_date_gap_days": result["max_date_gap_days"],
+                    },
+                })
+            get_stream_writer()({
+                "event": "workflow.progress",
+                "data": {"runId": getattr(context, "run_id", None), "stage": "preflight", "step_status": "completed", "message": "文件适配检查完成"},
+            })
+            return {"preflight": result}
+
+        async def start_analysis(state: ComparisonState) -> dict[str, Any]:
+            return {}
+
+        async def reject_incompatible(state: ComparisonState) -> dict[str, Any]:
+            context, payload, preflight_result = state["context"], state["payload"], state["preflight"]
+            for stage, label in (("prospectus", "招募说明书识别"), ("periodic_report", "定期报告识别"), ("comparison", "结果比对")):
+                get_stream_writer()({
+                    "event": "workflow.progress",
+                    "data": {"runId": getattr(context, "run_id", None), "stage": stage, "step_status": "skipped", "message": f"{label}已跳过"},
+                })
+            documents = {}
+            for role, name_key, preview_key in (
+                ("prospectus", "prospectus_filename", "prospectus_preview_id"),
+                ("periodic_report", "periodic_filename", "periodic_preview_id"),
+            ):
+                metadata = preflight_result[role]
+                date_range = metadata.get("date_interval") or {}
+                documents[role] = {
+                    "filename": payload[name_key],
+                    "page_count": metadata.get("page_count"),
+                    "page_dimensions": [],
+                    "preview_id": payload.get(preview_key),
+                    "document_info": {
+                        "fund_name": metadata.get("fund_name"),
+                        "fund_code": metadata.get("fund_code"),
+                        "disclosure_date": date_range.get("start") if date_range.get("start") == date_range.get("end") else None,
+                        "period_end": None,
+                    },
+                    "metadata_evidence": {},
+                }
+            result = {
+                "status": preflight_result["status"],
+                "documents": documents,
+                "difference_count": 0,
+                "warnings": [preflight_result["message"]],
+                "modules": [],
+                "preflight": preflight_result,
+                "run_id": getattr(context, "run_id", None),
+            }
+            trace_callback = getattr(context, "trace_callback", None)
+            if trace_callback:
+                trace_callback({"kind": "artifact", "path": "comparison/comparison_result.json", "content": result})
+            get_stream_writer()({
+                "event": "workflow.completed",
+                "data": {"runId": getattr(context, "run_id", None), "result": result},
+            })
+            return {"result": result}
+
         async def analyze_prospectus(state: ComparisonState) -> dict[str, Any]:
             context, payload = state["context"], state["payload"]
             get_stream_writer()({
@@ -184,6 +261,7 @@ class InvestmentComparisonWorkflow:
                 content=payload["prospectus_content"],
                 role="prospectus",
                 provider=context.provider,
+                force_refresh=bool(payload.get("force_refresh", False)),
                 trace_callback=getattr(context, "trace_callback", None),
             )
             get_stream_writer()({
@@ -203,6 +281,7 @@ class InvestmentComparisonWorkflow:
                 content=payload["periodic_content"],
                 role="periodic_report",
                 provider=context.provider,
+                force_refresh=bool(payload.get("force_refresh", False)),
                 trace_callback=getattr(context, "trace_callback", None),
             )
             get_stream_writer()({
@@ -228,6 +307,7 @@ class InvestmentComparisonWorkflow:
             payload = state["payload"]
             result["documents"]["prospectus"]["preview_id"] = payload.get("prospectus_preview_id")
             result["documents"]["periodic_report"]["preview_id"] = payload.get("periodic_preview_id")
+            result["preflight"] = state["preflight"]
             get_stream_writer()({
                 "event": "workflow.completed",
                 "data": {"runId": getattr(context, "run_id", None), "result": result},
@@ -235,12 +315,22 @@ class InvestmentComparisonWorkflow:
             return {"result": result}
 
         graph.add_node("load_inputs", load_inputs)
+        graph.add_node("preflight", preflight)
+        graph.add_node("start_analysis", start_analysis)
+        graph.add_node("reject_incompatible", reject_incompatible)
         graph.add_node("analyze_prospectus", analyze_prospectus)
         graph.add_node("analyze_periodic_report", analyze_periodic_report)
         graph.add_node("compare", compare)
         graph.add_edge(START, "load_inputs")
-        graph.add_edge("load_inputs", "analyze_prospectus")
-        graph.add_edge("load_inputs", "analyze_periodic_report")
+        graph.add_edge("load_inputs", "preflight")
+        graph.add_conditional_edges(
+            "preflight",
+            lambda state: "reject" if state["preflight"]["blocked"] else "continue",
+            {"reject": "reject_incompatible", "continue": "start_analysis"},
+        )
+        graph.add_edge("reject_incompatible", END)
+        graph.add_edge("start_analysis", "analyze_prospectus")
+        graph.add_edge("start_analysis", "analyze_periodic_report")
         graph.add_edge("analyze_prospectus", "compare")
         graph.add_edge("analyze_periodic_report", "compare")
         graph.add_edge("compare", END)

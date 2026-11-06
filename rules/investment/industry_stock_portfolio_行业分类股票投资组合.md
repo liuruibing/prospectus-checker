@@ -1,7 +1,7 @@
 # 模块规则：报告期末按行业分类的股票投资组合
 
 - `rule_id`: `investment.industry_stock_portfolio`
-- `version`: 1
+- `version`: 2
 - `table_kind`: `detail`（市场分组内重复行业行）
 - 公共契约：[`common_公共规则.md`](common_公共规则.md)
 
@@ -28,6 +28,14 @@
 - 跨页续表若未重复表头，只有在公共规则确认属于同一逻辑表、且前页列映射能唯一延续时，才可沿用该列语义；续页自身单元格和值仍须单独核对。不能因为续页行序相同就推定列含义相同。
 - 抽取全部披露行业行，包括横线行、合计行及跨页续表行。A–S 仅是常见代码范围，不是必需完整清单。
 - `total` 是独立汇总行，不作为行业身份。
+
+## row_completeness
+
+| `row_label` | `recovery_policy` |
+|---|---|
+| `合计` | `recover_from_unique_mapped_source_row_if_model_omits` |
+
+只有当 PyMuPDF 在本章节对应页中找到行标签、且表头映射能唯一确认所有必需字段列时，才可从该源表补回模型漏掉的合计行。存在多个候选或列映射不完整时不得猜测，模块转待复核。
 
 ## column_policy / bindings
 

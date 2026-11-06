@@ -5,13 +5,15 @@ import os
 import secrets
 import traceback
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Literal
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from threading import RLock
 
 import pymupdf as fitz
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -172,8 +174,7 @@ async def _compare_uploads(
 
 
 def _job_view(job: dict, include_result: bool = False) -> dict:
-    fields = ("job_id", "run_id", "status", "stage", "message", "created_at", "started_at", "updated_at", "completed_at", "steps", "error")
-    view = {key: job.get(key) for key in fields}
+    view = AUDIT_STORE.summarize(job)
     view["trace_url"] = f"/api/jobs/{job.get('job_id')}/trace"
     if include_result and job.get("result") is not None:
         result = dict(job["result"])
@@ -223,7 +224,7 @@ def _runtime_trace_info() -> dict:
 
 
 async def _process_job(job_id: str, workflow_id: str, context: WorkflowContext) -> None:
-    steps = {"prospectus": "queued", "periodic_report": "queued", "comparison": "queued"}
+    steps = {"preflight": "queued", "prospectus": "queued", "periodic_report": "queued", "comparison": "queued"}
     active_stage = None
     _update_job(
         job_id, status="running", stage="starting", message="后台核对已开始",
@@ -251,18 +252,23 @@ async def _process_job(job_id: str, workflow_id: str, context: WorkflowContext) 
 
     try:
         result = await _run_comparison(workflow_id, context, record_progress)
+        blocked = bool((result.get("preflight") or {}).get("blocked"))
+        final_steps = dict(steps)
+        if not blocked:
+            final_steps["comparison"] = "completed"
         _update_job(
             job_id,
             status="completed",
             stage="completed",
-            message="核对完成，点击查看报告结果",
+            message="文件不适配，无法比较" if blocked else "核对完成，点击查看报告结果",
             completed_at=_utc_now(),
-            steps={**steps, "comparison": "completed"},
+            steps=final_steps,
             result=result,
         )
         AUDIT_STORE.record_event(job_id, "job_completed", {
             "difference_count": result.get("difference_count"),
             "warning_count": len(result.get("warnings", [])),
+            "preflight_status": (result.get("preflight") or {}).get("status"),
         })
     except Exception as exc:
         AUDIT_STORE.write_artifact(job_id, "errors/traceback.txt", traceback.format_exc())
@@ -294,9 +300,11 @@ async def _process_job(job_id: str, workflow_id: str, context: WorkflowContext) 
 async def create_comparison_job(
     prospectus: UploadFile = File(...),
     periodic_report: UploadFile = File(...),
+    force_refresh: bool = Form(False),
 ) -> dict:
     try:
         context = await _prepare_comparison("prospectus-periodic-comparison", prospectus, periodic_report)
+        context.input_val["force_refresh"] = force_refresh
     except HTTPException:
         raise
     except Exception as exc:
@@ -323,9 +331,11 @@ async def create_comparison_job(
             "started_at": None,
             "updated_at": now,
             "completed_at": None,
-            "steps": {"prospectus": "queued", "periodic_report": "queued", "comparison": "queued"},
+            "steps": {"preflight": "queued", "prospectus": "queued", "periodic_report": "queued", "comparison": "queued"},
             "error": None,
             "result": None,
+            "document_names": {"prospectus": context.input_val["prospectus_filename"],
+                               "periodic_report": context.input_val["periodic_filename"]},
         }
         context.trace_callback = lambda item: _record_task_trace(job_id, item)
         try:
@@ -356,6 +366,43 @@ async def create_comparison_job(
 @app.get("/api/jobs")
 async def list_comparison_jobs() -> dict:
     return {"jobs": [_job_view(job) for job in AUDIT_STORE.recent_jobs(100)]}
+
+
+@app.get("/api/tasks")
+async def query_comparison_tasks(
+    q: str = Query("", max_length=200),
+    status: Literal["queued", "running", "completed", "failed"] | None = None,
+    result_status: str | None = Query(None, max_length=40),
+    start_date: date | None = None,
+    end_date: date | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+) -> dict:
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
+    keyword = q.strip().casefold()
+    matches = []
+    for job in AUDIT_STORE.job_summaries():
+        if status and job.get("status") != status:
+            continue
+        if result_status and job.get("result_status") != result_status:
+            continue
+        search = [job.get("job_id"), job.get("fund_name"), job.get("fund_code"), *(job.get("document_names") or {}).values()]
+        if keyword and not any(keyword in str(value or "").casefold() for value in search):
+            continue
+        if start_date or end_date:
+            try:
+                created = datetime.fromisoformat(str(job["created_at"]).replace("Z", "+00:00"))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                local_date = created.astimezone(ZoneInfo("Asia/Shanghai")).date()
+            except (ValueError, TypeError, KeyError):
+                continue
+            if (start_date and local_date < start_date) or (end_date and local_date > end_date):
+                continue
+        matches.append(job)
+    offset = (page - 1) * page_size
+    return {"tasks": matches[offset:offset + page_size], "total": len(matches), "page": page, "page_size": page_size}
 
 
 @app.get("/api/jobs/{job_id}/trace")

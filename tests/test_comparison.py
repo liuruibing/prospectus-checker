@@ -104,6 +104,31 @@ def test_missing_row_shows_the_side_where_it_was_found():
     assert difference["periodic_report"] is None
 
 
+def test_unique_stock_matches_when_only_one_market_is_unknown():
+    row = {"label": "示例股票", "stock_code": "600001", "stock_name": "示例股票", "market_scope": "domestic",
+           "fields": {"fair_value": value("10"), "quantity": value("2", "股"), "ratio_of_net_assets": value("1", "%")}}
+    result = compare_documents(document(stock_rows=[row]), document(stock_rows=[{**row, "market_scope": "unknown"}]))
+    assert result["status"] == "MATCH"
+    assert result["difference_count"] == 0
+    conflict = compare_documents(document(stock_rows=[row]), document(stock_rows=[{**row, "market_scope": "hk_connect"}]))
+    assert conflict["status"] == "UNRESOLVED"
+    assert conflict["difference_count"] == 0
+
+
+def test_unidentified_industry_rows_cannot_silently_pass_or_become_single_sided():
+    row = {"label": "采矿业", "industry_code": "B", "market_scope": "unknown",
+           "fields": {"fair_value": value("10"), "ratio_of_net_assets": value("1", "%")}}
+    result = compare_documents(document(industry_rows=[row]), document(industry_rows=[row]))
+    assert result["status"] == "UNRESOLVED"
+    assert result["difference_count"] == 0
+    complete = document(asset_rows=[asset_row()])
+    incomplete = document()
+    incomplete["modules"][0]["status"] = "UNRESOLVED_STRUCTURE"
+    result = compare_documents(complete, incomplete)
+    assert result["status"] == "UNRESOLVED"
+    assert not result["modules"][0]["differences"]
+
+
 def test_changed_stock_rank_is_reported_as_a_module_difference():
     prospectus_stock = {
         "stock_code": "600519",

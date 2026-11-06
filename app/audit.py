@@ -71,11 +71,53 @@ class TaskAuditStore:
             }
             _atomic_json(directory / "metadata.json", metadata)
             _atomic_json(directory / "job.json", job)
+            _atomic_json(directory / "summary.json", self.summarize(job, metadata))
         self.record_event(task_id, "task_created", {"status": job.get("status"), "stage": job.get("stage")})
 
     def save_job(self, task_id: str, job: dict[str, Any]) -> None:
         with self._lock:
             _atomic_json(self.task_dir(task_id) / "job.json", job)
+            _atomic_json(self.task_dir(task_id) / "summary.json", self.summarize(job))
+
+    def summarize(self, job: dict[str, Any], metadata: dict | None = None) -> dict:
+        fields = ("job_id", "run_id", "status", "stage", "message", "created_at", "started_at", "updated_at", "completed_at", "steps", "error")
+        summary = {key: job.get(key) for key in fields}
+        result = job.get("result") or {}
+        preflight = result.get("preflight") or {}
+        documents = result.get("documents") or {}
+        names = dict(job.get("document_names") or {})
+        if not names:
+            if metadata is None:
+                try:
+                    metadata = json.loads((self.task_dir(job["job_id"]) / "metadata.json").read_text(encoding="utf-8"))
+                except (OSError, ValueError, KeyError):
+                    metadata = {}
+            names = {role: value.get("filename") for role, value in (metadata.get("documents") or {}).items()}
+        for role, document in documents.items():
+            if document.get("filename"):
+                names[role] = document["filename"]
+        info = (documents.get("prospectus") or {}).get("document_info") or preflight.get("prospectus") or {}
+        summary.update(document_names=names, fund_name=info.get("fund_name"), fund_code=info.get("fund_code"),
+                       result_status=result.get("status"), difference_count=result.get("difference_count"),
+                       preflight_blocked=bool(preflight.get("blocked")), preflight_message=preflight.get("message"))
+        return summary
+
+    def job_summaries(self) -> list[dict[str, Any]]:
+        summaries = []
+        for job_path in self.root.glob("*/job.json"):
+            summary_path = job_path.with_name("summary.json")
+            try:
+                if summary_path.exists() and summary_path.stat().st_mtime_ns >= job_path.stat().st_mtime_ns:
+                    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                else:
+                    summary = self.summarize(json.loads(job_path.read_text(encoding="utf-8")))
+                    with self._lock:
+                        _atomic_json(summary_path, summary)
+                if summary.get("job_id"):
+                    summaries.append(summary)
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+        return sorted(summaries, key=lambda job: (str(job.get("created_at") or ""), job["job_id"]), reverse=True)
 
     def record_event(self, task_id: str, event: str, details: dict[str, Any] | None = None) -> None:
         record = {"timestamp": _now(), "event": event, "details": details or {}}

@@ -54,3 +54,30 @@ def test_make_provider_selects_omp_from_environment(monkeypatch):
     monkeypatch.setenv("PROSPECTUS_LLM_PROVIDER", "omp")
 
     assert isinstance(ai.make_provider(), ai.OMPProvider)
+
+
+def test_langchain_limits_parallel_requests_and_records_per_request_metrics(monkeypatch):
+    monkeypatch.setenv("PROSPECTUS_MODEL_CONCURRENCY", "2")
+    provider = ai.LangChainProvider()
+    active, peak = 0, 0
+
+    class Model:
+        async def ainvoke(self, messages):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return type("Reply", (), {"content": messages[-1][1], "usage_metadata": {"output_tokens": 1},
+                                      "response_metadata": {"finish_reason": "stop"}})()
+
+    monkeypatch.setattr(provider, "build_model", lambda: Model())
+
+    async def run():
+        return await asyncio.gather(*(provider.generate_text("system", str(i)) for i in range(6)))
+
+    result = asyncio.run(run())
+    assert peak == 2
+    assert list(result) == [str(i) for i in range(6)]
+    assert all(value.metrics["usage"]["output_tokens"] == 1 for value in result)
+    assert result[-1].metrics["queue_ms"] > 0

@@ -90,14 +90,44 @@ def _row_index(module_id: str, rows: list[dict[str, Any]]) -> tuple[dict[str, di
             counts[key] = counts.get(key, 0) + 1
     result: dict[str, dict[str, Any]] = {}
     unresolved: set[str] = set()
-    for row in rows:
+    for index, row in enumerate(rows):
         key, confident = _row_key(module_id, row, counts)
-        if not key or key in result or not confident:
-            if key:
-                unresolved.add(key)
+        if not key or key in result or key in unresolved or not confident:
+            result.pop(key, None)
+            unresolved.add(key or f"unmapped:{index}")
             continue
         result[key] = row
     return result, unresolved
+
+
+def _align_stock_markets(left_rows: list[dict], right_rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Use a unique security code when a market is absent, never across conflicting scopes."""
+    left = [dict(row) for row in left_rows]
+    right = [dict(row) for row in right_rows]
+    indexes = []
+    for rows in (left, right):
+        index: dict[str, list[dict]] = {}
+        for row in rows:
+            code = normalize_stock_code(row.get("stock_code"))
+            if code:
+                index.setdefault(code, []).append(row)
+        indexes.append(index)
+    for code in set(indexes[0]) & set(indexes[1]):
+        a, b = indexes[0][code], indexes[1][code]
+        if len(a) != 1 or len(b) != 1:
+            continue
+        first, second = a[0], b[0]
+        market_a, market_b = first.get("market_scope") or "unknown", second.get("market_scope") or "unknown"
+        scope_a, scope_b = first.get("investment_scope") or "unknown", second.get("investment_scope") or "unknown"
+        if (market_a != "unknown" and market_b != "unknown" and market_a != market_b) or (
+            scope_a != "unknown" and scope_b != "unknown" and scope_a != scope_b
+        ):
+            first["schema_warnings"] = [*first.get("schema_warnings", []), "scope_conflict"]
+            second["schema_warnings"] = [*second.get("schema_warnings", []), "scope_conflict"]
+            continue
+        market = market_a if market_a != "unknown" else market_b
+        first["market_scope"] = second["market_scope"] = market
+    return left, right
 
 
 def _field_difference(row_id: str, row_label: str, key: str, left: dict[str, Any] | None, right: dict[str, Any] | None, status: str, message: str) -> dict[str, Any]:
@@ -127,14 +157,29 @@ def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[st
                 "prospectus_rows": (left_module or {}).get("rows", []), "periodic_rows": (right_module or {}).get("rows", [])}
     left_rows = left_module.get("rows", [])
     right_rows = right_module.get("rows", [])
+    if module_id == "investment.stock_holdings":
+        left_rows, right_rows = _align_stock_markets(left_rows, right_rows)
+    schema_issue = any(row.get("schema_warnings") for row in (*left_rows, *right_rows))
+    if schema_issue:
+        return {
+            "rule_id": module_id,
+            "title": title,
+            "status": "UNRESOLVED_STRUCTURE",
+            "differences": [],
+            "review_message": "部分行身份或引用无法确认，暂不将其列为指标差异。",
+            "prospectus_rows": left_rows,
+            "periodic_rows": right_rows,
+        }
     left_index, left_unresolved = _row_index(module_id, left_rows)
     right_index, right_unresolved = _row_index(module_id, right_rows)
     unresolved_rows = left_unresolved | right_unresolved
     differences: list[dict[str, Any]] = []
-    unresolved = left_module.get("status") != "EXTRACTED" or right_module.get("status") != "EXTRACTED"
-    for row_key in sorted(unresolved_rows):
-        unresolved = True
-        differences.append(_field_difference(row_key, row_key, "row_identity", None, None, "UNRESOLVED", "行身份重复或不足以唯一匹配，需要人工复核"))
+    identity_unresolved = bool(unresolved_rows)
+    unresolved = (
+        left_module.get("status") != "EXTRACTED"
+        or right_module.get("status") != "EXTRACTED"
+        or identity_unresolved
+    )
     all_keys = sorted(set(left_index) | set(right_index))
     for row_key in all_keys:
         left_row, right_row = left_index.get(row_key), right_index.get(row_key)
@@ -142,6 +187,8 @@ def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[st
         if left_row is None or right_row is None:
             present_row = left_row or right_row
             if _row_has_only_empty_metrics(module_id, present_row):
+                continue
+            if unresolved:
                 continue
             left_value = {"raw_text": left_row.get("label") or row_key, "evidence": left_row.get("row_evidence")} if left_row else None
             right_value = {"raw_text": right_row.get("label") or row_key, "evidence": right_row.get("row_evidence")} if right_row else None
@@ -192,8 +239,28 @@ def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[st
         status = "UNRESOLVED_STRUCTURE"
     else:
         status = "MATCH"
-    return {"rule_id": module_id, "title": title, "status": status, "differences": differences,
-            "prospectus_rows": left_rows, "periodic_rows": right_rows}
+    review_message = None
+    completeness_messages = []
+    for document_label, module in (("招募说明书", left_module), ("定期报告", right_module)):
+        if not isinstance(module, dict):
+            continue
+        completeness_messages.extend(
+            f"{document_label}：{message}"
+            for message in module.get("completeness_warnings", [])
+        )
+    if identity_unresolved:
+        completeness_messages.append("部分行身份不足以唯一匹配，系统未将其判为单侧出现。")
+    if completeness_messages:
+        review_message = " ".join(completeness_messages)
+    return {
+        "rule_id": module_id,
+        "title": title,
+        "status": status,
+        "differences": differences,
+        "review_message": review_message,
+        "prospectus_rows": left_rows,
+        "periodic_rows": right_rows,
+    }
 
 
 def compare_documents(prospectus: dict[str, Any], periodic_report: dict[str, Any]) -> dict[str, Any]:

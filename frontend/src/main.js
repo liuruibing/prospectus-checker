@@ -6,6 +6,7 @@ import "element-ui/lib/theme-chalk/index.css";
 import "./styles.css";
 import App from "./App.vue";
 import Workbench from "./views/Workbench.vue";
+import TaskList from "./views/TaskList.vue";
 
 Vue.use(VueRouter);
 Vue.use(ElementUI, { size: "small" });
@@ -13,7 +14,11 @@ Vue.config.productionTip = false;
 
 const router = new VueRouter({
   mode: "hash",
-  routes: [{ path: "/", component: Workbench }],
+  routes: [
+    { path: "/", component: TaskList },
+    { path: "/tasks/:taskId", component: Workbench },
+    { path: "*", redirect: "/" },
+  ],
 });
 
 new Vue({
