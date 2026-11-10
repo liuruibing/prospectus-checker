@@ -2,7 +2,10 @@
   <div class="task-list-page">
     <header class="app-topbar">
       <div class="brand-block"><div class="brand-logo">审</div><div class="brand-name"><strong>基金招募说明书核对</strong></div></div>
-      <div class="topbar-actions"><el-button type="primary" icon="el-icon-plus" class="upload-trigger" @click="uploadVisible = true">新增核对</el-button></div>
+      <div class="topbar-actions">
+        <el-button icon="el-icon-document" class="rule-maintenance-trigger" @click="ruleMaintenanceVisible = true">规则维护</el-button>
+        <el-button type="primary" icon="el-icon-plus" class="upload-trigger" @click="uploadVisible = true">新增核对</el-button>
+      </div>
     </header>
     <main class="task-list-main">
       <div class="task-list-heading"><h1>核对任务</h1><span>共 {{ total }} 项</span></div>
@@ -22,7 +25,7 @@
               <tr v-for="task in tasks" :key="task.job_id">
                 <td><router-link class="task-id-link" :to="detailLink(task)">{{ task.job_id }}</router-link></td>
                 <td class="task-files-cell">
-                  <div v-for="role in documentRoles" :key="role.key" class="task-document-row" :title="fileName(task, role.key)">
+                  <div v-for="role in documentRoles" v-if="fileName(task, role.key) !== '未记录文件名'" :key="role.key" class="task-document-row" :title="fileName(task, role.key)">
                     <span class="task-document-icon" :class="role.key">{{ role.icon }}</span><span class="task-document-label">{{ role.label }}</span><span class="task-document-name">{{ fileName(task, role.key) }}</span>
                   </div>
                 </td>
@@ -40,23 +43,25 @@
       </section>
     </main>
     <upload-dialog :visible.sync="uploadVisible" @submitted="taskCreated" />
+    <rule-maintenance-drawer :visible.sync="ruleMaintenanceVisible" />
   </div>
 </template>
 
 <script>
 import axios from "axios";
 import UploadDialog from "../components/UploadDialog.vue";
+import RuleMaintenanceDrawer from "../components/RuleMaintenanceDrawer.vue";
 
 export default {
   name: "TaskList",
-  components: { UploadDialog },
+  components: { UploadDialog, RuleMaintenanceDrawer },
   data() {
     return {
       tasks: [], total: 0, loading: false, error: "", keyword: "", status: "", resultStatus: "", dates: [], page: 1, pageSize: 10,
-      uploadVisible: false, clockNow: Date.now(), pollTimer: null, clockTimer: null, requestId: 0, refreshing: false,
+      uploadVisible: false, ruleMaintenanceVisible: false, clockNow: Date.now(), pollTimer: null, clockTimer: null, requestId: 0, refreshing: false,
       states: [{ value: "queued", label: "排队中" }, { value: "running", label: "核对中" }, { value: "completed", label: "已完成" }, { value: "failed", label: "失败" }],
-      results: [{ value: "MATCH", label: "一致" }, { value: "MISMATCH", label: "存在差异" }, { value: "UNRESOLVED", label: "待人工复核" }, { value: "FUND_MISMATCH", label: "基金身份不一致" }, { value: "DATE_MISMATCH", label: "文件日期不适配" }],
-      documentRoles: [{ key: "prospectus", icon: "招", label: "招募书" }, { key: "periodic_report", icon: "报", label: "定期报告" }],
+      results: [{ value: "MATCH", label: "一致" }, { value: "MISMATCH", label: "存在差异" }, { value: "UNRESOLVED", label: "待人工复核" }, { value: "NOT_CHECKED", label: "未核对" }, { value: "INCOMPATIBLE", label: "文件不适配" }, { value: "FUND_MISMATCH", label: "基金身份不一致" }, { value: "DATE_MISMATCH", label: "文件日期不适配" }],
+      documentRoles: [{ key: "prospectus", icon: "招", label: "招募书" }, { key: "periodic_report", icon: "报", label: "定期报告" }, { key: "product_summary", icon: "概", label: "产品概要" }, { key: "annual_report", icon: "年", label: "年度报告" }],
     };
   },
   computed: { hasFilters() { return !!(this.keyword || this.status || this.resultStatus || this.dates && this.dates.length); } },
@@ -113,11 +118,17 @@ export default {
     resultLabel(task) {
       if (task.status === "failed") return "核对失败";
       if (task.status !== "completed") return "等待结果";
+      if (task.workflow_id === "product-summary-verification") {
+        if (task.result_status === "MISMATCH") return "差异 " + (task.difference_count || 0) + " 项";
+        if (task.result_status === "UNRESOLVED") return "有待复核项";
+        if (task.result_status === "NOT_CHECKED") return "有未核对项";
+        if (task.result_status === "INCOMPATIBLE") return "文件不适配";
+      }
       if (task.result_status === "MISMATCH") return "差异 " + (task.difference_count || 0) + " 项";
       const item = this.results.find((item) => item.value === task.result_status);
       return item ? item.label : "未记录结果";
     },
-    resultClass(task) { return task.status === "failed" || task.result_status === "MISMATCH" ? "danger" : task.result_status === "MATCH" ? "success" : task.result_status ? "warning" : "muted"; },
+    resultClass(task) { return task.status === "failed" || task.result_status === "MISMATCH" ? "danger" : task.result_status === "MATCH" ? "success" : ["NOT_CHECKED", "INCOMPATIBLE"].includes(task.result_status) ? "muted" : task.result_status ? "warning" : "muted"; },
     formatDate(value) { const date = new Date(value); return value && !Number.isNaN(date.getTime()) ? date.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).replace(/\//g, "-") : "—"; },
     elapsed(task) {
       if (!task.started_at) return "—";

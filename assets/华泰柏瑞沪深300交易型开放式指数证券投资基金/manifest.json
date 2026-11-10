@@ -1,0 +1,82 @@
+{
+  "code": "510300",
+  "fund_id": "2012",
+  "name": "华泰柏瑞沪深300交易型开放式指数证券投资基金",
+  "manager": "华泰柏瑞基金",
+  "type": "境内股票指数ETF",
+  "compiled": "2025-11-24",
+  "cutoff": "2025-06-30",
+  "note": "招书11月更新主要涉及申购赎回清单，投资组合仍截止2025-06-30，使用同截止日中期报告核对。概要可先核对编制日前已披露的2025年第3季度报告。招书区分指数投资与积极投资，不能按相同名称合并两类行。",
+  "source_index_url": "http://eid.csrc.gov.cn/fund/disclose/fund_detail.do?fundId=2012",
+  "downloaded_at": "2026-11-06T14:21:17+08:00",
+  "documents": [
+    {
+      "file": "2025-11-24_招募说明书更新_2025年第3号.pdf",
+      "relative_path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+      "role": "prospectus",
+      "publication_date": "2025-11-24",
+      "official_instance_id": "1392237",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1392237",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "187c5b55642435732d4d1a09802d5434bc547b5569763ca9207102bd60caa60d",
+      "bytes": 1225152,
+      "pages": 134,
+      "extractable_text_chars": 118262
+    },
+    {
+      "file": "2025-11-24_产品资料概要更新.pdf",
+      "relative_path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+      "role": "product_summary",
+      "publication_date": "2025-11-24",
+      "official_instance_id": "1392214",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1392214",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "c00ceaf200a405a0e15459deff9d2ef5e1f12e8e0c88ba492169ca5f08f7b676",
+      "bytes": 261145,
+      "pages": 4,
+      "extractable_text_chars": 3350
+    },
+    {
+      "file": "2025-08-30_2025年中期报告.pdf",
+      "relative_path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-08-30_2025年中期报告.pdf",
+      "role": "prospectus_reference",
+      "publication_date": "2025-08-30",
+      "official_instance_id": "1350137",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1350137",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "ec9569b56cc9342685bd7279c2a9e479dadb7c177a4679c9f929f344116ddfc1",
+      "bytes": 2195179,
+      "pages": 65,
+      "extractable_text_chars": 75950
+    },
+    {
+      "file": "2025-10-28_2025年第3季度报告.pdf",
+      "relative_path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+      "role": "summary_reference",
+      "publication_date": "2025-10-28",
+      "official_instance_id": "1379244",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1379244",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "26bfd30e3484a58f4ba2a0945ec49039b1cc2c01fa2433f66eb53e1ae1f1ecd8",
+      "bytes": 543712,
+      "pages": 14,
+      "extractable_text_chars": 11910
+    },
+    {
+      "file": "2025-03-31_2024年年度报告.pdf",
+      "relative_path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-03-31_2024年年度报告.pdf",
+      "role": "annual_reference",
+      "publication_date": "2025-03-31",
+      "official_instance_id": "1258867",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1258867",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "6eabbdbad90860c41f87dfbe5eb2402780f3d8531a49c13ef4a20ab175820b92",
+      "bytes": 2533438,
+      "pages": 81,
+      "extractable_text_chars": 93855
+    }
+  ],
+  "validation_scope": "下载文件为有效PDF、可读取页数和文本，核对了封面类型/产品/日期及招书投资组合截止日；未运行AI核对，未声明所有指标一致。",
+  "fee_note": "年度报告仅供对应年度实际费用等指标核对；概要预估年费用不能直接视为与年报实际费用同口径。",
+  "version_note": "同批披露的概要编制日可能早于招书公告日，补充条款须核实生效日和适用版本，不能仅凭同批文件推定所有字段适用。"
+}

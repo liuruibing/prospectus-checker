@@ -16,10 +16,12 @@
 - `fund_id` + `period_end` + `market_scope` + `investment_scope`。
 - `market_scope` 候选：`domestic`、`hk_connect`、`other`、`unknown`。必须由子标题、表头或明确上下文确定；不确定时保留 `unknown` 并阻止自动匹配。
 - 两侧期末日期、市场范围和投资范围必须一致才允许比较。
+- `investment_scope` 使用 `all`（该市场整体投资）、`index`（指数投资）、`active`（积极投资）、`other` 或 `unknown`。标题明确为该市场的整体股票投资组合、没有进一步拆分指数/积极子表时，属于 `all`，不应因未出现“普通投资”字样而填 `unknown`。存在多个投资子表时分别保留其范围，不能统一改成 `all`；标题或上下文不足时仍为 `unknown`。
+- 模块 scope 与每行 investment_scope 均须填写上述语义值；同一逻辑表的续页沿用已确认的表级范围，不因续页缺少重复标题而丢失范围。
 
 ## row_policy
 
-- `row_identity = market_scope + industry_code`；代码缺失时可用 `market_scope + normalized_industry_name`，并降低为人工确认候选。
+- `row_identity = market_scope + investment_scope + industry_code`；代码缺失时可用 `market_scope + investment_scope + normalized_industry_name`，并降低为人工确认候选。同一市场下指数投资与积极投资可能出现相同的行业代码，不能因此合并。
 - 行业名用于交叉核验；不能仅靠文本相似度合并不同行业。代码相同但名称冲突时 `UNRESOLVED_ROW_IDENTITY`。
 - 行业名称在单元格内自动换行时仍是一条逻辑行，不得拆成多行。应将代码、完整行业名称、公允价值和净值比例归属到同一表格行；PDF 文本流可能把代码或数值插在换行的名称片段之间，不能要求整行名称在页面文本中连续出现。
 - 行身份和字段证据优先依据同一表格行的单元格关系核验。行文本引用只需忠实覆盖页面原文，不因列间文本顺序或单元格换行而拒绝已能唯一定位的行与字段。

@@ -1,0 +1,26 @@
+{
+  "case_id": "513100_SUMMARY_FALLBACK",
+  "status": "PENDING_INDEPENDENT_PDF_REVIEW",
+  "documents": [
+    {
+      "role": "target",
+      "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_产品资料概要更新.pdf",
+      "sha256": "5f3d7ad5f1eb394d6ce6b06fef0c0a1966774a2a6268f6357fb7ed1822e32358",
+      "official_instance_id": "1578629"
+    },
+    {
+      "role": "primary_reference",
+      "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-08-31_2026年中期报告.pdf",
+      "sha256": "c6046aebd66c89321f6eb0a83f149d45a889c8e45c11ce8d88ec1888d1e6cb2f",
+      "official_instance_id": "1562728"
+    },
+    {
+      "role": "fallback_reference",
+      "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_招募说明书更新_2026年第一号.pdf",
+      "sha256": "d2bcc6389dec8400b29bd3245c2cbe6a393b60c620cbe97f036767c7a938b507",
+      "official_instance_id": "1578626"
+    }
+  ],
+  "items": [],
+  "review_note": "尚未逐项对照原PDF建立独立预期，不得用于准确率验收。"
+}

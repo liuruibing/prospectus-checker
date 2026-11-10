@@ -1,0 +1,1649 @@
+{
+  "case_id": "050011_PROSPECTUS",
+  "status": "READY",
+  "documents": [
+    {
+      "role": "target",
+      "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+      "sha256": "43d0f49bb255051c930a06d11c86dab57de3909a01305e8ce190c42fb8e1a8ea",
+      "official_instance_id": "1580900"
+    },
+    {
+      "role": "primary_reference",
+      "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+      "sha256": "9039176eae7d160179ce905bcd6360a497a428a62d9a7fb1f0286c9c25ac7044",
+      "official_instance_id": "1341151"
+    }
+  ],
+  "items": [],
+  "review_note": "独立对照原始PDF：招募说明书PDF107-109页、2025年中期报告PDF36-37页。目标资产表在PDF107-108页跨页，合计在续页；行业表含合计，前十名股票表原文没有合计行。招募说明书注明数据来自截至2025-06-30的组合，与指定报告期间相同。",
+  "modules": [
+    {
+      "module_id": "asset_allocation",
+      "title": "报告期末基金资产组合情况",
+      "scope": "all_assets",
+      "status": "CONFIRMED",
+      "period": "截至2025-06-30",
+      "fields": [
+        "序号",
+        "项目",
+        "金额（元）",
+        "占基金总资产的比例（%）"
+      ],
+      "rows": [
+        {
+          "values": [
+            "1",
+            "权益投资",
+            "1,034,861,119.55",
+            "18.67"
+          ],
+          "reference_values": [
+            "1",
+            "权益投资",
+            "1,034,861,119.55",
+            "18.67"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 107,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：1 / 权益投资 / 1,034,861,119.55 / 18.67",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：1 / 权益投资 / 1,034,861,119.55 / 18.67",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "",
+            "其中：股票",
+            "1,034,861,119.55",
+            "18.67"
+          ],
+          "reference_values": [
+            "",
+            "其中：股票",
+            "1,034,861,119.55",
+            "18.67"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 107,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行： / 其中：股票 / 1,034,861,119.55 / 18.67",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行： / 其中：股票 / 1,034,861,119.55 / 18.67",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "2",
+            "基金投资",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "2",
+            "基金投资",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：2 / 基金投资 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：2 / 基金投资 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "3",
+            "固定收益投资",
+            "4,315,928,818.46",
+            "77.86"
+          ],
+          "reference_values": [
+            "3",
+            "固定收益投资",
+            "4,315,928,818.46",
+            "77.86"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：3 / 固定收益投资 / 4,315,928,818.46 / 77.86",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：3 / 固定收益投资 / 4,315,928,818.46 / 77.86",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "",
+            "其中：债券",
+            "4,315,928,818.46",
+            "77.86"
+          ],
+          "reference_values": [
+            "",
+            "其中：债券",
+            "4,315,928,818.46",
+            "77.86"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行： / 其中：债券 / 4,315,928,818.46 / 77.86",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行： / 其中：债券 / 4,315,928,818.46 / 77.86",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "",
+            "资产支持证券",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "",
+            "资产支持证券",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行： / 资产支持证券 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行： / 资产支持证券 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "4",
+            "贵金属投资",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "4",
+            "贵金属投资",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：4 / 贵金属投资 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：4 / 贵金属投资 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "5",
+            "金融衍生品投资",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "5",
+            "金融衍生品投资",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：5 / 金融衍生品投资 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：5 / 金融衍生品投资 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "6",
+            "买入返售金融资产",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "6",
+            "买入返售金融资产",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：6 / 买入返售金融资产 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：6 / 买入返售金融资产 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "",
+            "其中：买断式回购的买入返售金融资产",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "",
+            "其中：买断式回购的买入返售金融资产",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行： / 其中：买断式回购的买入返售金融资产 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行： / 其中：买断式回购的买入返售金融资产 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "7",
+            "银行存款和结算备付金合计",
+            "163,998,005.66",
+            "2.96"
+          ],
+          "reference_values": [
+            "7",
+            "银行存款和结算备付金合计",
+            "163,998,005.66",
+            "2.96"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：7 / 银行存款和结算备付金合计 / 163,998,005.66 / 2.96",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：7 / 银行存款和结算备付金合计 / 163,998,005.66 / 2.96",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "8",
+            "其他资产",
+            "28,740,803.11",
+            "0.52"
+          ],
+          "reference_values": [
+            "8",
+            "其他各项资产",
+            "28,740,803.11",
+            "0.52"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：8 / 其他资产 / 28,740,803.11 / 0.52",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：8 / 其他各项资产 / 28,740,803.11 / 0.52",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ],
+          "reason": "其他资产与其他各项资产为本资产组合表同一业务项目，数值和比例一致。"
+        },
+        {
+          "values": [
+            "9",
+            "合计",
+            "5,543,528,746.78",
+            "100.00"
+          ],
+          "reference_values": [
+            "9",
+            "合计",
+            "5,543,528,746.78",
+            "100.00"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "all_assets",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：9 / 合计 / 5,543,528,746.78 / 100.00",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末基金资产组合情况；列：序号 / 项目 / 金额（元） / 占基金总资产的比例（%）；行：9 / 合计 / 5,543,528,746.78 / 100.00",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module_id": "industry_stock_portfolio",
+      "title": "报告期末按行业分类的境内股票投资组合",
+      "scope": "domestic",
+      "status": "CONFIRMED",
+      "period": "截至2025-06-30",
+      "fields": [
+        "代码",
+        "行业类别",
+        "公允价值（元）",
+        "占基金资产净值比例（%）"
+      ],
+      "rows": [
+        {
+          "values": [
+            "A",
+            "农、林、牧、渔业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "A",
+            "农、林、牧、渔业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：A / 农、林、牧、渔业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：A / 农、林、牧、渔业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "B",
+            "采矿业",
+            "534,760,000.00",
+            "10.27"
+          ],
+          "reference_values": [
+            "B",
+            "采矿业",
+            "534,760,000.00",
+            "10.27"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：B / 采矿业 / 534,760,000.00 / 10.27",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：B / 采矿业 / 534,760,000.00 / 10.27",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "C",
+            "制造业",
+            "500,101,119.55",
+            "9.61"
+          ],
+          "reference_values": [
+            "C",
+            "制造业",
+            "500,101,119.55",
+            "9.61"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：C / 制造业 / 500,101,119.55 / 9.61",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：C / 制造业 / 500,101,119.55 / 9.61",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "D",
+            "电力、热力、燃气及水生产和供应业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "D",
+            "电力、热力、燃气及水生产和供应业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：D / 电力、热力、燃气及水生产和供应业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：D / 电力、热力、燃气及水生产和供应业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "E",
+            "建筑业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "E",
+            "建筑业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：E / 建筑业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：E / 建筑业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "F",
+            "批发和零售业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "F",
+            "批发和零售业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：F / 批发和零售业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：F / 批发和零售业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "G",
+            "交通运输、仓储和邮政业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "G",
+            "交通运输、仓储和邮政业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：G / 交通运输、仓储和邮政业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：G / 交通运输、仓储和邮政业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "H",
+            "住宿和餐饮业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "H",
+            "住宿和餐饮业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：H / 住宿和餐饮业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：H / 住宿和餐饮业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "I",
+            "信息传输、软件和信息技术服务业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "I",
+            "信息传输、软件和信息技术服务业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：I / 信息传输、软件和信息技术服务业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：I / 信息传输、软件和信息技术服务业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "J",
+            "金融业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "J",
+            "金融业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：J / 金融业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：J / 金融业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "K",
+            "房地产业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "K",
+            "房地产业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：K / 房地产业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：K / 房地产业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "L",
+            "租赁和商务服务业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "L",
+            "租赁和商务服务业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：L / 租赁和商务服务业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：L / 租赁和商务服务业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "M",
+            "科学研究和技术服务业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "M",
+            "科学研究和技术服务业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：M / 科学研究和技术服务业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：M / 科学研究和技术服务业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "N",
+            "水利、环境和公共设施管理业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "N",
+            "水利、环境和公共设施管理业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：N / 水利、环境和公共设施管理业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：N / 水利、环境和公共设施管理业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "O",
+            "居民服务、修理和其他服务业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "O",
+            "居民服务、修理和其他服务业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：O / 居民服务、修理和其他服务业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：O / 居民服务、修理和其他服务业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "P",
+            "教育",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "P",
+            "教育",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：P / 教育 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：P / 教育 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "Q",
+            "卫生和社会工作",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "Q",
+            "卫生和社会工作",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：Q / 卫生和社会工作 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：Q / 卫生和社会工作 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "R",
+            "文化、体育和娱乐业",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "R",
+            "文化、体育和娱乐业",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：R / 文化、体育和娱乐业 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：R / 文化、体育和娱乐业 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "S",
+            "综合",
+            "-",
+            "-"
+          ],
+          "reference_values": [
+            "S",
+            "综合",
+            "-",
+            "-"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：S / 综合 / - / -",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行：S / 综合 / - / -",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "",
+            "合计",
+            "1,034,861,119.55",
+            "19.88"
+          ],
+          "reference_values": [
+            "",
+            "合计",
+            "1,034,861,119.55",
+            "19.88"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 108,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行： / 合计 / 1,034,861,119.55 / 19.88",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 36,
+              "quote": "报告期末按行业分类的境内股票投资组合；列：代码 / 行业类别 / 公允价值（元） / 占基金资产净值比例（%）；行： / 合计 / 1,034,861,119.55 / 19.88",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module_id": "stock_holdings",
+      "title": "报告期末前十名股票投资明细",
+      "scope": "domestic_top10",
+      "status": "CONFIRMED",
+      "period": "截至2025-06-30",
+      "fields": [
+        "序号",
+        "股票代码",
+        "股票名称",
+        "数量（股）",
+        "公允价值（元）",
+        "占基金资产净值比例（%）"
+      ],
+      "rows": [
+        {
+          "values": [
+            "1",
+            "601899",
+            "紫金矿业",
+            "26,560,000",
+            "517,920,000.00",
+            "9.95"
+          ],
+          "reference_values": [
+            "1",
+            "601899",
+            "紫金矿业",
+            "26,560,000",
+            "517,920,000.00",
+            "9.95"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：1 / 601899 / 紫金矿业 / 26,560,000 / 517,920,000.00 / 9.95",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：1 / 601899 / 紫金矿业 / 26,560,000 / 517,920,000.00 / 9.95",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "2",
+            "603606",
+            "东方电缆",
+            "3,750,039",
+            "193,914,516.69",
+            "3.72"
+          ],
+          "reference_values": [
+            "2",
+            "603606",
+            "东方电缆",
+            "3,750,039",
+            "193,914,516.69",
+            "3.72"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：2 / 603606 / 东方电缆 / 3,750,039 / 193,914,516.69 / 3.72",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：2 / 603606 / 东方电缆 / 3,750,039 / 193,914,516.69 / 3.72",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "3",
+            "301392",
+            "汇成真空",
+            "1,059,990",
+            "126,361,407.90",
+            "2.43"
+          ],
+          "reference_values": [
+            "3",
+            "301392",
+            "汇成真空",
+            "1,059,990",
+            "126,361,407.90",
+            "2.43"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：3 / 301392 / 汇成真空 / 1,059,990 / 126,361,407.90 / 2.43",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：3 / 301392 / 汇成真空 / 1,059,990 / 126,361,407.90 / 2.43",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "4",
+            "600522",
+            "中天科技",
+            "5,440,000",
+            "78,662,400.00",
+            "1.51"
+          ],
+          "reference_values": [
+            "4",
+            "600522",
+            "中天科技",
+            "5,440,000",
+            "78,662,400.00",
+            "1.51"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：4 / 600522 / 中天科技 / 5,440,000 / 78,662,400.00 / 1.51",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：4 / 600522 / 中天科技 / 5,440,000 / 78,662,400.00 / 1.51",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "5",
+            "002026",
+            "山东威达",
+            "3,840,000",
+            "46,656,000.00",
+            "0.90"
+          ],
+          "reference_values": [
+            "5",
+            "002026",
+            "山东威达",
+            "3,840,000",
+            "46,656,000.00",
+            "0.90"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：5 / 002026 / 山东威达 / 3,840,000 / 46,656,000.00 / 0.90",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：5 / 002026 / 山东威达 / 3,840,000 / 46,656,000.00 / 0.90",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "6",
+            "688120",
+            "华海清科",
+            "180,000",
+            "30,366,000.00",
+            "0.58"
+          ],
+          "reference_values": [
+            "6",
+            "688120",
+            "华海清科",
+            "180,000",
+            "30,366,000.00",
+            "0.58"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：6 / 688120 / 华海清科 / 180,000 / 30,366,000.00 / 0.58",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：6 / 688120 / 华海清科 / 180,000 / 30,366,000.00 / 0.58",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "7",
+            "603993",
+            "洛阳钼业",
+            "2,000,000",
+            "16,840,000.00",
+            "0.32"
+          ],
+          "reference_values": [
+            "7",
+            "603993",
+            "洛阳钼业",
+            "2,000,000",
+            "16,840,000.00",
+            "0.32"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：7 / 603993 / 洛阳钼业 / 2,000,000 / 16,840,000.00 / 0.32",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：7 / 603993 / 洛阳钼业 / 2,000,000 / 16,840,000.00 / 0.32",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "8",
+            "600183",
+            "生益科技",
+            "400,000",
+            "12,060,000.00",
+            "0.23"
+          ],
+          "reference_values": [
+            "8",
+            "600183",
+            "生益科技",
+            "400,000",
+            "12,060,000.00",
+            "0.23"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：8 / 600183 / 生益科技 / 400,000 / 12,060,000.00 / 0.23",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：8 / 600183 / 生益科技 / 400,000 / 12,060,000.00 / 0.23",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "9",
+            "688037",
+            "芯源微",
+            "100,000",
+            "10,720,000.00",
+            "0.21"
+          ],
+          "reference_values": [
+            "9",
+            "688037",
+            "芯源微",
+            "100,000",
+            "10,720,000.00",
+            "0.21"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：9 / 688037 / 芯源微 / 100,000 / 10,720,000.00 / 0.21",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：9 / 688037 / 芯源微 / 100,000 / 10,720,000.00 / 0.21",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        },
+        {
+          "values": [
+            "10",
+            "688002",
+            "睿创微纳",
+            "19,518",
+            "1,360,794.96",
+            "0.03"
+          ],
+          "reference_values": [
+            "10",
+            "688002",
+            "睿创微纳",
+            "19,518",
+            "1,360,794.96",
+            "0.03"
+          ],
+          "status": "CONFIRMED",
+          "expected_comparison_status": "MATCH",
+          "scope": "domestic_top10",
+          "evidence": [
+            {
+              "role": "target",
+              "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+              "pdf_page": 109,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：10 / 688002 / 睿创微纳 / 19,518 / 1,360,794.96 / 0.03",
+              "kind": "TARGET",
+              "period": "2025-06-30"
+            },
+            {
+              "role": "primary_reference",
+              "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+              "pdf_page": 37,
+              "quote": "报告期末前十名股票投资明细；列：序号 / 股票代码 / 股票名称 / 数量（股） / 公允价值（元） / 占基金资产净值比例（%）；行：10 / 688002 / 睿创微纳 / 19,518 / 1,360,794.96 / 0.03",
+              "kind": "PRIMARY",
+              "period": "2025-06-30"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "method": "独立读取PDF原文、表格单元格并核对关键页面渲染；未使用核对模型运行结果作为预期",
+    "input_hashes": [
+      {
+        "role": "target",
+        "sha256": "43d0f49bb255051c930a06d11c86dab57de3909a01305e8ce190c42fb8e1a8ea",
+        "matches_manifest": true
+      },
+      {
+        "role": "primary_reference",
+        "sha256": "9039176eae7d160179ce905bcd6360a497a428a62d9a7fb1f0286c9c25ac7044",
+        "matches_manifest": true
+      }
+    ],
+    "row_count": 43,
+    "arithmetic_checks": [
+      {
+        "scope": "all_assets",
+        "amount_sum": "5543528746.78",
+        "disclosed_total": "5,543,528,746.78",
+        "amount_equal": true,
+        "rounded_ratio_sum": "100.01",
+        "disclosed_ratio_total": "100.00",
+        "ratio_rounding_note": "分项显示比例经两位小数舍入，允许与总计存在尾差。"
+      },
+      {
+        "scope": "domestic",
+        "amount_sum": "1034861119.55",
+        "disclosed_total": "1,034,861,119.55",
+        "amount_equal": true
+      }
+    ],
+    "unconfirmed_items": []
+  }
+}

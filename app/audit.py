@@ -42,6 +42,7 @@ class TaskAuditStore:
         documents: dict[str, tuple[str, bytes]],
         runtime: dict[str, Any],
     ) -> None:
+        job["owner_pid"] = os.getpid()
         directory = self.task_dir(task_id)
         with self._lock:
             directory.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -64,7 +65,7 @@ class TaskAuditStore:
                 "task_id": task_id,
                 "created_at": job.get("created_at") or _now(),
                 "owner_id": None,
-                "workflow_id": "prospectus-periodic-comparison",
+                "workflow_id": job.get("workflow_id", "prospectus-periodic-comparison"),
                 "runtime": runtime,
                 "documents": document_meta,
                 "storage": "local filesystem",
@@ -80,7 +81,7 @@ class TaskAuditStore:
             _atomic_json(self.task_dir(task_id) / "summary.json", self.summarize(job))
 
     def summarize(self, job: dict[str, Any], metadata: dict | None = None) -> dict:
-        fields = ("job_id", "run_id", "status", "stage", "message", "created_at", "started_at", "updated_at", "completed_at", "steps", "error")
+        fields = ("job_id", "run_id", "workflow_id", "historical", "status", "stage", "message", "created_at", "started_at", "updated_at", "completed_at", "steps", "error")
         summary = {key: job.get(key) for key in fields}
         result = job.get("result") or {}
         preflight = result.get("preflight") or {}
@@ -96,9 +97,11 @@ class TaskAuditStore:
         for role, document in documents.items():
             if document.get("filename"):
                 names[role] = document["filename"]
-        info = (documents.get("prospectus") or {}).get("document_info") or preflight.get("prospectus") or {}
+        identity_role = "product_summary" if job.get("workflow_id") == "product-summary-verification" else "prospectus"
+        info = (documents.get(identity_role) or {}).get("document_info") or preflight.get(identity_role) or preflight.get("prospectus") or {}
         summary.update(document_names=names, fund_name=info.get("fund_name"), fund_code=info.get("fund_code"),
                        result_status=result.get("status"), difference_count=result.get("difference_count"),
+                       not_checked_count=result.get("not_checked_count"),
                        preflight_blocked=bool(preflight.get("blocked")), preflight_message=preflight.get("message"))
         return summary
 

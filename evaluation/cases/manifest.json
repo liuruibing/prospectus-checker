@@ -1,0 +1,382 @@
+{
+  "version": 1,
+  "corpus_manifest": "assets/corpus_manifest.json",
+  "case_count": 15,
+  "cases": [
+    {
+      "case_id": "000001_PROSPECTUS",
+      "product": "华夏成长证券投资基金",
+      "fund_code": "000001",
+      "workflow": "prospectus",
+      "task_type": "prospectus_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_招募说明书更新.pdf",
+          "sha256": "d54bb28636c2a2f173d313f47297cb312f713404b057d129c8ae7e4fb9cdefa7",
+          "official_instance_id": "1541450"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/华夏成长证券投资基金/2026-04-22_2026年第1季度报告.pdf",
+          "sha256": "4c31e5833835f159499cd204cc9a01d3f24cb5fa3005bc7e98102e19d12437f8",
+          "official_instance_id": "1479958"
+        }
+      ],
+      "expected_path": "evaluation/expected/000001_PROSPECTUS.json",
+      "ground_truth_status": "READY"
+    },
+    {
+      "case_id": "000001_SUMMARY_PRIMARY",
+      "product": "华夏成长证券投资基金",
+      "fund_code": "000001",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "sha256": "42c9854eee3979b4d399e1886737412b1cf133bd2a55188174064c069130fd16",
+          "official_instance_id": "1541336"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+          "sha256": "5d719abce68b6d2c412c7efe99dea43b5600f2ec63413148f8a708929684e13b",
+          "official_instance_id": "1534170"
+        }
+      ],
+      "expected_path": "evaluation/expected/000001_SUMMARY_PRIMARY.json",
+      "ground_truth_status": "READY_WITH_UNCONFIRMED_ITEMS"
+    },
+    {
+      "case_id": "000001_SUMMARY_FALLBACK",
+      "product": "华夏成长证券投资基金",
+      "fund_code": "000001",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "sha256": "42c9854eee3979b4d399e1886737412b1cf133bd2a55188174064c069130fd16",
+          "official_instance_id": "1541336"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+          "sha256": "5d719abce68b6d2c412c7efe99dea43b5600f2ec63413148f8a708929684e13b",
+          "official_instance_id": "1534170"
+        },
+        {
+          "role": "fallback_reference",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_招募说明书更新.pdf",
+          "sha256": "d54bb28636c2a2f173d313f47297cb312f713404b057d129c8ae7e4fb9cdefa7",
+          "official_instance_id": "1541450"
+        }
+      ],
+      "expected_path": "evaluation/expected/000001_SUMMARY_FALLBACK.json",
+      "ground_truth_status": "READY_WITH_UNCONFIRMED_ITEMS"
+    },
+    {
+      "case_id": "510300_PROSPECTUS",
+      "product": "华泰柏瑞沪深300交易型开放式指数证券投资基金",
+      "fund_code": "510300",
+      "workflow": "prospectus",
+      "task_type": "prospectus_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+          "sha256": "187c5b55642435732d4d1a09802d5434bc547b5569763ca9207102bd60caa60d",
+          "official_instance_id": "1392237"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-08-30_2025年中期报告.pdf",
+          "sha256": "ec9569b56cc9342685bd7279c2a9e479dadb7c177a4679c9f929f344116ddfc1",
+          "official_instance_id": "1350137"
+        }
+      ],
+      "expected_path": "evaluation/expected/510300_PROSPECTUS.json",
+      "ground_truth_status": "READY"
+    },
+    {
+      "case_id": "510300_SUMMARY_PRIMARY",
+      "product": "华泰柏瑞沪深300交易型开放式指数证券投资基金",
+      "fund_code": "510300",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "sha256": "c00ceaf200a405a0e15459deff9d2ef5e1f12e8e0c88ba492169ca5f08f7b676",
+          "official_instance_id": "1392214"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+          "sha256": "26bfd30e3484a58f4ba2a0945ec49039b1cc2c01fa2433f66eb53e1ae1f1ecd8",
+          "official_instance_id": "1379244"
+        }
+      ],
+      "expected_path": "evaluation/expected/510300_SUMMARY_PRIMARY.json",
+      "ground_truth_status": "READY_WITH_UNCONFIRMED_ITEMS"
+    },
+    {
+      "case_id": "510300_SUMMARY_FALLBACK",
+      "product": "华泰柏瑞沪深300交易型开放式指数证券投资基金",
+      "fund_code": "510300",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "sha256": "c00ceaf200a405a0e15459deff9d2ef5e1f12e8e0c88ba492169ca5f08f7b676",
+          "official_instance_id": "1392214"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+          "sha256": "26bfd30e3484a58f4ba2a0945ec49039b1cc2c01fa2433f66eb53e1ae1f1ecd8",
+          "official_instance_id": "1379244"
+        },
+        {
+          "role": "fallback_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+          "sha256": "187c5b55642435732d4d1a09802d5434bc547b5569763ca9207102bd60caa60d",
+          "official_instance_id": "1392237"
+        }
+      ],
+      "expected_path": "evaluation/expected/510300_SUMMARY_FALLBACK.json",
+      "ground_truth_status": "READY_WITH_UNCONFIRMED_ITEMS"
+    },
+    {
+      "case_id": "050011_PROSPECTUS",
+      "product": "博时信用债券投资基金",
+      "fund_code": "050011",
+      "workflow": "prospectus",
+      "task_type": "prospectus_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+          "sha256": "43d0f49bb255051c930a06d11c86dab57de3909a01305e8ce190c42fb8e1a8ea",
+          "official_instance_id": "1580900"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/博时信用债券投资基金/2025-08-29_2025年中期报告.pdf",
+          "sha256": "9039176eae7d160179ce905bcd6360a497a428a62d9a7fb1f0286c9c25ac7044",
+          "official_instance_id": "1341151"
+        }
+      ],
+      "expected_path": "evaluation/expected/050011_PROSPECTUS.json",
+      "ground_truth_status": "READY"
+    },
+    {
+      "case_id": "050011_SUMMARY_PRIMARY",
+      "product": "博时信用债券投资基金",
+      "fund_code": "050011",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "sha256": "c393b01622c5bc64293629604c5a9a0d367ac8820000cb4f1f21b9060c26bb6c",
+          "official_instance_id": "1581606"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+          "sha256": "388ebfbdae6e8a02767aa81f2e15ebb558962b7095f90ec5387f0d5f53b2511c",
+          "official_instance_id": "1562472"
+        }
+      ],
+      "expected_path": "evaluation/expected/050011_SUMMARY_PRIMARY.json",
+      "ground_truth_status": "READY_WITH_UNCONFIRMED_ITEMS"
+    },
+    {
+      "case_id": "050011_SUMMARY_FALLBACK",
+      "product": "博时信用债券投资基金",
+      "fund_code": "050011",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "sha256": "c393b01622c5bc64293629604c5a9a0d367ac8820000cb4f1f21b9060c26bb6c",
+          "official_instance_id": "1581606"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+          "sha256": "388ebfbdae6e8a02767aa81f2e15ebb558962b7095f90ec5387f0d5f53b2511c",
+          "official_instance_id": "1562472"
+        },
+        {
+          "role": "fallback_reference",
+          "path": "assets/博时信用债券投资基金/2026-09-21_招募说明书更新.pdf",
+          "sha256": "43d0f49bb255051c930a06d11c86dab57de3909a01305e8ce190c42fb8e1a8ea",
+          "official_instance_id": "1580900"
+        }
+      ],
+      "expected_path": "evaluation/expected/050011_SUMMARY_FALLBACK.json",
+      "ground_truth_status": "READY_WITH_UNCONFIRMED_ITEMS"
+    },
+    {
+      "case_id": "513100_PROSPECTUS",
+      "product": "纳斯达克100交易型开放式指数证券投资基金",
+      "fund_code": "513100",
+      "workflow": "prospectus",
+      "task_type": "prospectus_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_招募说明书更新_2026年第一号.pdf",
+          "sha256": "d2bcc6389dec8400b29bd3245c2cbe6a393b60c620cbe97f036767c7a938b507",
+          "official_instance_id": "1578626"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+          "sha256": "783c9b7207fff7d0e4352c25210742b96bc14055502629509b55fb384d5b2a1e",
+          "official_instance_id": "1533701"
+        }
+      ],
+      "expected_path": "evaluation/expected/513100_PROSPECTUS.json",
+      "ground_truth_status": "PENDING_INDEPENDENT_PDF_REVIEW"
+    },
+    {
+      "case_id": "513100_SUMMARY_PRIMARY",
+      "product": "纳斯达克100交易型开放式指数证券投资基金",
+      "fund_code": "513100",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_产品资料概要更新.pdf",
+          "sha256": "5f3d7ad5f1eb394d6ce6b06fef0c0a1966774a2a6268f6357fb7ed1822e32358",
+          "official_instance_id": "1578629"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-08-31_2026年中期报告.pdf",
+          "sha256": "c6046aebd66c89321f6eb0a83f149d45a889c8e45c11ce8d88ec1888d1e6cb2f",
+          "official_instance_id": "1562728"
+        }
+      ],
+      "expected_path": "evaluation/expected/513100_SUMMARY_PRIMARY.json",
+      "ground_truth_status": "PENDING_INDEPENDENT_PDF_REVIEW"
+    },
+    {
+      "case_id": "513100_SUMMARY_FALLBACK",
+      "product": "纳斯达克100交易型开放式指数证券投资基金",
+      "fund_code": "513100",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_产品资料概要更新.pdf",
+          "sha256": "5f3d7ad5f1eb394d6ce6b06fef0c0a1966774a2a6268f6357fb7ed1822e32358",
+          "official_instance_id": "1578629"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-08-31_2026年中期报告.pdf",
+          "sha256": "c6046aebd66c89321f6eb0a83f149d45a889c8e45c11ce8d88ec1888d1e6cb2f",
+          "official_instance_id": "1562728"
+        },
+        {
+          "role": "fallback_reference",
+          "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_招募说明书更新_2026年第一号.pdf",
+          "sha256": "d2bcc6389dec8400b29bd3245c2cbe6a393b60c620cbe97f036767c7a938b507",
+          "official_instance_id": "1578626"
+        }
+      ],
+      "expected_path": "evaluation/expected/513100_SUMMARY_FALLBACK.json",
+      "ground_truth_status": "PENDING_INDEPENDENT_PDF_REVIEW"
+    },
+    {
+      "case_id": "000198_PROSPECTUS",
+      "product": "天弘余额宝货币市场基金",
+      "fund_code": "000198",
+      "workflow": "prospectus",
+      "task_type": "prospectus_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/天弘余额宝货币市场基金/2025-10-21_招募说明书更新.pdf",
+          "sha256": "936e05c3466698fbe71badf61e9736e701c12336dd9b9110ee35909432d1b419",
+          "official_instance_id": "1367273"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/天弘余额宝货币市场基金/2025-08-29_2025年中期报告.pdf",
+          "sha256": "cbb633baef68f3ca02be12d1620678d3eb536f4a13d3985fc9be26dbe94842d9",
+          "official_instance_id": "1340543"
+        }
+      ],
+      "expected_path": "evaluation/expected/000198_PROSPECTUS.json",
+      "ground_truth_status": "PENDING_INDEPENDENT_PDF_REVIEW"
+    },
+    {
+      "case_id": "000198_SUMMARY_PRIMARY",
+      "product": "天弘余额宝货币市场基金",
+      "fund_code": "000198",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/天弘余额宝货币市场基金/2026-06-26_产品资料概要更新.pdf",
+          "sha256": "a69b54f9b073ec9b18d822454a6d8ebae2568f84059775348da029dc3cfd35db",
+          "official_instance_id": "1511945"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/天弘余额宝货币市场基金/2026-04-22_2026年第1季度报告.pdf",
+          "sha256": "b95534071ff13e01138e47975f62c86e27cfd8d5edec2ca9bc8fd7b198aa497a",
+          "official_instance_id": "1472474"
+        }
+      ],
+      "expected_path": "evaluation/expected/000198_SUMMARY_PRIMARY.json",
+      "ground_truth_status": "PENDING_INDEPENDENT_PDF_REVIEW"
+    },
+    {
+      "case_id": "000198_SUMMARY_FALLBACK",
+      "product": "天弘余额宝货币市场基金",
+      "fund_code": "000198",
+      "workflow": "product_summary",
+      "task_type": "product_summary_compare",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/天弘余额宝货币市场基金/2026-06-26_产品资料概要更新.pdf",
+          "sha256": "a69b54f9b073ec9b18d822454a6d8ebae2568f84059775348da029dc3cfd35db",
+          "official_instance_id": "1511945"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/天弘余额宝货币市场基金/2026-04-22_2026年第1季度报告.pdf",
+          "sha256": "b95534071ff13e01138e47975f62c86e27cfd8d5edec2ca9bc8fd7b198aa497a",
+          "official_instance_id": "1472474"
+        },
+        {
+          "role": "fallback_reference",
+          "path": "assets/天弘余额宝货币市场基金/2025-10-21_招募说明书更新.pdf",
+          "sha256": "936e05c3466698fbe71badf61e9736e701c12336dd9b9110ee35909432d1b419",
+          "official_instance_id": "1367273"
+        }
+      ],
+      "expected_path": "evaluation/expected/000198_SUMMARY_FALLBACK.json",
+      "ground_truth_status": "PENDING_INDEPENDENT_PDF_REVIEW"
+    }
+  ]
+}

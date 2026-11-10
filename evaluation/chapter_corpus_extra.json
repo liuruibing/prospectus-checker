@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "case_id": "510100_SUMMARY_FALLBACK",
+      "fund_code": "510100",
+      "product": "易方达上证50交易型开放式指数证券投资基金",
+      "purpose": "chapter_inventory_only",
+      "documents": [
+        {
+          "role": "target",
+          "path": "assets/易方达上证50交易型开放式指数证券投资基金基金产品资料概要更新.pdf",
+          "sha256": "1605375f600b9ff080afe7d6c30a2c28484c51881d2fd3f0b5c14c76764490d9"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/易方达上证50交易型开放式指数证券投资基金2025年第4季度报告.pdf",
+          "sha256": "e84e1c35f00ce2920dccf95b3d13ee096f8737b4240a43a4dd4e17513c3399db"
+        },
+        {
+          "role": "primary_reference",
+          "path": "assets/易方达上证50交易型开放式指数证券投资基金2025年年度报告.pdf",
+          "sha256": "62db56fea1f0cdce94fe64b4618887206350aff55cb291c59d3b526cd9b95706"
+        },
+        {
+          "role": "fallback_reference",
+          "path": "assets/易方达上证50交易型开放式指数证券投资基金更新的招募说明书.pdf",
+          "sha256": "3d7b6cca0a32cbfe7095f367aa6985c8de203874c5b4d1e3112303b865b6a768"
+        }
+      ]
+    }
+  ]
+}

@@ -2,8 +2,201 @@ import asyncio
 import json
 from pathlib import Path
 
+import pymupdf as fitz
+
 from app import extraction
 from app.domain import MODULE_RULES
+
+
+def test_numbered_child_heading_without_space_has_its_full_depth():
+    assert extraction._heading_depth('12.3.4章节内容') == 3
+    assert extraction._heading_depth('## 12.3 章节内容') == 2
+
+
+def test_heading_alias_selects_complete_title_and_quote_ignores_source_comments():
+    rules = {rule['rule_id']: rule['file'].read_text() for rule in MODULE_RULES}
+    title = '5.3 报告期末按公允价值占基金资产净值比例大小排序的前十名股票投资明细'
+    sentence = '该范围本期无持仓。'
+    md = f'## {title}\n<!-- source-pages: 2 -->\n![原图：物理页 2](assets/page2.png)\n{sentence}\n## 5.4 债券投资\n其他内容'
+    section = extraction._anydoc_sections(md, rules)['investment.stock_holdings']
+    assert section.startswith('## '+title)
+    assert '其他内容' not in section
+    claims = [{'status': 'NO_DATA', 'page': 2, 'quote': title+'\n'+sentence}]
+    verified = extraction._verify_disclosures(claims, section, [{'page': 2, 'text': title+'\n'+sentence}], {2})
+    assert len(verified) == 1
+    warnings = []
+    extraction._verify_disclosures([dict(claims[0], quote='不在原文的引句')], section,
+                                  [{'page': 2, 'text': sentence}], {2}, diagnostics=warnings)
+    assert '引文未在归集章节中找到' in warnings[0]
+
+
+def test_metadata_dates_accept_only_contextual_omitted_year_in_valid_range():
+    assert extraction._metadata_value_matches('period_end', '2024-12-31', '本报告期自2024年10月1日起至12月31日止')
+    assert not extraction._metadata_value_matches('period_end', '2024-12-31', '2024年成立，12月31日送出')
+    assert not extraction._metadata_value_matches('period_end', '2024-02-31', '2024年2月31日')
+    assert not extraction._metadata_value_matches('period_end', '2024-01-31', '2024年12月1日至1月31日')
+
+
+def test_repeated_quote_is_located_only_when_chapter_heading_disambiguates_it():
+    pdf = fitz.open()
+    p = pdf.new_page()
+    for y, text in ((40, '1 Earlier holdings'), (60, 'No positions.'),
+                    (100, '2 Later holdings'), (120, 'No positions.')):
+        p.insert_text((40, y), text)
+    pages = [{'page': 1, 'text': p.get_text()}]
+    claim = [{'status': 'NO_DATA', 'page': 1, 'quote': 'No positions.'}]
+    try:
+        located = extraction._verify_disclosures(claim, '## 2 Later holdings\nNo positions.', pages, {1}, document=pdf)
+        assert located[0]['evidence']['status'] == 'LOCATED'
+        assert 80 < located[0]['evidence']['bbox'][1] < 100
+        assert located[0]['evidence']['bbox'][3] > 120
+        ambiguous = extraction._verify_disclosures(claim, 'No positions.', pages, {1}, document=pdf)
+        assert ambiguous[0]['evidence']['status'] == 'QUOTE_ONLY'
+    finally:
+        pdf.close()
+
+
+def test_repeated_disclosure_uses_child_heading_and_stops_at_next_section():
+    with fitz.open() as pdf:
+        page = pdf.new_page()
+        for y, text in ((40, '5.2 Industry holdings'), (70, '5.2.1 Domestic holdings'),
+                        (95, 'No positions.'), (125, '5.2.2 Overseas holdings'),
+                        (150, 'No overseas positions.'), (180, '5.3 Stock holdings'),
+                        (205, 'No positions.')):
+            page.insert_text((40, y), text)
+        pages = [{'page': 1, 'text': page.get_text()}]
+        chapter = ('## 5.2 Industry holdings\n### 5.2.1 Domestic holdings\n'
+                   '<!-- source-pages: 1 -->\nNo positions.\n'
+                   '### 5.2.2 Overseas holdings\nNo overseas positions.')
+        claims = [{'status': 'NO_DATA', 'page': 1, 'quote': 'No positions.',
+                   'scope': {'market_scope': 'domestic'}}]
+        result = extraction._verify_disclosures(claims, chapter, pages, {1}, document=pdf)
+        evidence = result[0]['evidence']
+        assert result[0]['scope']['market_scope'] == 'domestic'
+        assert evidence['status'] == 'LOCATED'
+        assert 50 < evidence['bbox'][1] < 70
+        assert 95 < evidence['bbox'][3] < 125
+
+
+def test_repeated_disclosure_with_two_occurrences_in_same_section_stays_ambiguous():
+    with fitz.open() as pdf:
+        page = pdf.new_page()
+        for y, text in ((40, '5.2 Holdings'), (70, 'No positions.'), (100, 'No positions.')):
+            page.insert_text((40, y), text)
+        claims = [{'status': 'NO_DATA', 'page': 1, 'quote': 'No positions.'}]
+        result = extraction._verify_disclosures(
+            claims, '## 5.2 Holdings\nNo positions.\nNo positions.',
+            [{'page': 1, 'text': page.get_text()}], {1}, document=pdf,
+        )
+        assert result[0]['evidence']['status'] == 'QUOTE_ONLY'
+        assert result[0]['evidence']['bbox'] is None
+
+
+def test_complete_sections_accept_spacing_and_title_wording_variants():
+    rules = {rule['rule_id']: rule['file'].read_text(encoding='utf-8') for rule in MODULE_RULES}
+    markdown = '''## 12.1 期末基金资产组合情况
+|项目|金额|占基金总资产的比例|
+|现金|100|1.00|
+## 12.2 报告期末按行业分类的股票投资组合
+12.2.1报告期末按行业分类的境内股票投资组合
+<!-- source-pages: 7,8 -->
+<table><tr><td>代码</td><td>行业类别</td><td>公允价值</td><td>占基金资产净值比例</td></tr>
+<tr><td>A</td><td>行业甲</td><td>100</td><td>1.00</td></tr></table>
+## 12.3 期末按公允价值占基金资产净值比例大小排序的所有股票投资明细
+<table><tr><td>股票代码</td><td>股票名称</td><td>数量</td><td>公允价值</td><td>占基金资产净值比例</td></tr>
+<tr><td>123456</td><td>样本甲</td><td>100</td><td>200</td><td>1.00</td></tr></table>
+## 12.4 报告期内股票投资组合的重大变动
+后续章节不应混入
+'''
+    sections = extraction._anydoc_sections(markdown, rules)
+    assert '行业甲' in sections['investment.industry_stock_portfolio']
+    assert '123456' in sections['investment.stock_holdings']
+    assert '所有股票投资明细' in sections['investment.stock_holdings']
+    assert '后续章节不应混入' not in sections['investment.stock_holdings']
+
+
+def test_similar_heading_cannot_replace_the_asset_type_in_a_rule_title():
+    alias = '期末按公允价值占基金资产净值比例大小排序的股票投资明细'
+    assert not extraction._alias_spans('8.5 '+alias.replace('股票','债券'),[alias])
+    assert extraction._alias_spans('8.3 '+alias.replace('股票','所有股票'),[alias])
+
+
+def test_empty_stock_sections_keep_parent_and_stop_at_next_spaced_heading():
+    rules = {rule['rule_id']: rule['file'].read_text(encoding='utf-8') for rule in MODULE_RULES}
+    markdown = '''1 报告期末基金资产组合情况
+|项目|金额|占基金总资产的比例|
+|现金|100|100.00|
+2 报告期末按行业分类的股票投资组合
+## 2.1 报告期末按行业分类的境内股票投资组合
+本基金本报告期末未持有股票。
+## 2.2 报告期末按行业分类的港股通投资股票投资组合
+本基金本报告期末未持有港股通投资股票。
+3 报告期末按公允价值占基金资产净值比例大小排序的前十名股票投资明细
+<!-- source-pages: 8 -->
+本基金本报告期末未持有股票。
+4 报告期末按债券品种分类的债券投资组合
+后续债券表格及其余文件内容
+'''
+    sections = extraction._anydoc_sections(markdown, rules)
+    industry = sections['investment.industry_stock_portfolio']
+    stocks = sections['investment.stock_holdings']
+    assert '境内股票投资组合' in industry
+    assert '港股通投资股票投资组合' in industry
+    assert '未持有股票' in stocks
+    assert '债券' not in stocks
+    assert '其余文件内容' not in stocks
+    assert '行业分类' not in sections['investment.asset_allocation']
+    assert sections['investment.asset_allocation'].count('|现金|100|100.00|') == 1
+
+
+def test_empty_chapter_selection_does_not_borrow_next_chapters_table_score():
+    rules = {rule['rule_id']: rule['file'].read_text(encoding='utf-8') for rule in MODULE_RULES}
+    markdown = '''2 报告期末按行业分类的股票投资组合
+2.1 报告期末按行业分类的境内股票投资组合
+本基金本报告期末未持有股票。
+2.2 报告期末按行业分类的港股通投资股票投资组合
+本基金本报告期末未持有港股通投资股票。
+3 报告期末按公允价值占基金资产净值比例大小排序的前十名股票投资明细
+本基金本报告期末未持有股票。
+4 报告期末按债券品种分类的债券投资组合
+'''
+    markdown += '\n'.join('|国债|100|1.00|' for _ in range(25))
+    section = extraction._anydoc_sections(markdown, rules)['investment.industry_stock_portfolio']
+    assert '境内股票投资组合' in section
+    assert '港股通投资股票投资组合' in section
+    assert '国债' not in section
+
+
+def test_chapter_failure_cancels_pending_requests_before_returning(monkeypatch):
+    state = {'cancelled': 0, 'pending': 0}
+    failed_rule = MODULE_RULES[-1]['rule_id']
+    monkeypatch.setattr(extraction, 'MAX_ANALYSIS_CHARS', 10000)
+    monkeypatch.setattr(extraction, 'source_catalogue', lambda *args: [])
+    monkeypatch.setattr(extraction, 'source_gaps', lambda *args: [])
+
+    class WaitingProvider:
+        async def generate_text(self, *args):
+            state['pending'] += 1
+            try:
+                await asyncio.Future()
+            finally:
+                state['pending'] -= 1
+                state['cancelled'] += 1
+
+    async def run():
+        import pytest
+        with pytest.raises(ValueError, match='PDF_ANALYSIS_LIMIT_EXCEEDED'):
+            await extraction._extract_chapters(
+                filename='sample.pdf', role='prospectus', provider=WaitingProvider(),
+                contexts={failed_rule: {'section_markdown': 'x' * 20000, 'physical_pages': []}},
+                pages=[], rule_texts={r['rule_id']: '' for r in MODULE_RULES},
+                tables={}, header_maps={}, candidate_numbers=set(), trace_callback=None,
+                force_refresh=True, document_hash='sample', document=None,
+            )
+        assert state['pending'] == 0
+        assert state['cancelled'] == len(MODULE_RULES) - 1
+
+    asyncio.run(run())
 
 
 def test_industry_total_accepts_located_metrics_without_row_bbox(monkeypatch):
@@ -42,6 +235,85 @@ def test_industry_total_accepts_located_metrics_without_row_bbox(monkeypatch):
 
     assert result["status"] == "EXTRACTED"
     assert result["rows"][0]["row_evidence"]["status"] == "QUOTE_ONLY"
+
+
+def test_known_source_row_with_unknown_optional_key_is_preserved_without_structure_failure(monkeypatch):
+    rule = next(item for item in MODULE_RULES if item["rule_id"] == "investment.asset_allocation")
+    monkeypatch.setattr(extraction, "_verify_field", lambda *args, **kwargs: {
+        "raw_text": "-", "normalized_value": None, "value_kind": "DASH", "unit": "元",
+        "evidence": {"status": "LOCATED"},
+    })
+    monkeypatch.setattr(extraction, "_evidence", lambda *args, **kwargs: {"status": "LOCATED"})
+
+    result = extraction._verify_module(
+        document=None, pages=[],
+        raw_module={"found": True, "scope": {}, "rows": [{
+            "row_key": "unmapped_row", "row_label": "基金投资", "row_page": 1,
+            "row_quote": "基金投资 - -", "fields": {"amount": "-", "ratio_of_total_assets": "-"},
+        }]},
+        rule=rule, rule_text=rule["file"].read_text(encoding="utf-8"), source_pages=set(),
+        section_markdown="", table_cache={}, header_maps={},
+    )
+
+    assert result["status"] == "EXTRACTED"
+    assert result["rows"][0]["label"] == "基金投资"
+    assert result["rows"][0]["row_key"] == ""
+
+
+def test_verified_no_data_disclosure_is_valid_without_table_rows():
+    rule = next(item for item in MODULE_RULES if item["rule_id"] == "investment.stock_holdings")
+    quote = "本基金本报告期末未持有股票。"
+    result = extraction._verify_module(
+        document=None, pages=[{"page": 8, "text": quote}],
+        raw_module={"found": True, "rows": [], "scope": {}, "disclosures": [{
+            "status": "NO_DATA", "period_end": "2025-12-31",
+            "scope": {"portfolio": "equity holdings"}, "page": 8, "quote": quote,
+        }]},
+        rule=rule, rule_text=rule["file"].read_text(encoding="utf-8"),
+        source_pages={8}, section_markdown=quote, table_cache={}, header_maps={},
+    )
+    assert result["status"] == "EXTRACTED"
+    assert result["rows"] == []
+    assert result["disclosures"][0]["quote"] == quote
+
+
+def test_unverifiable_no_data_disclosure_does_not_clear_review_state():
+    rule = next(item for item in MODULE_RULES if item["rule_id"] == "investment.stock_holdings")
+    result = extraction._verify_module(
+        document=None, pages=[{"page": 8, "text": "这是有数据的章节。"}],
+        raw_module={"found": True, "rows": [], "scope": {}, "disclosures": [{
+            "status": "NO_DATA", "period_end": "2025-12-31",
+            "scope": {"portfolio": "equity holdings"}, "page": 8, "quote": "没有持仓",
+        }]},
+        rule=rule, rule_text=rule["file"].read_text(encoding="utf-8"),
+        source_pages={8}, section_markdown="这是有数据的章节。", table_cache={}, header_maps={},
+    )
+    assert result["status"] == "UNRESOLVED_STRUCTURE"
+    assert result["disclosures"] == []
+
+
+def test_invalid_table_row_reference_recovers_only_unique_mapped_cell():
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((40, 40), "基金投资 -")
+    pages = [{"text": "基金投资 -", "width": float(page.rect.width), "height": float(page.rect.height)}]
+    tables = {1: [{
+        "matrix": [["项目", "金额（元）"], ["基金投资", "-"]],
+        "cells_by_row": [[None, None], [None, [100.0, 100.0, 180.0, 120.0]]],
+    }]}
+    maps = {"investment.asset_allocation": {1: {0: {"amount": 1}}}}
+
+    evidence = extraction._evidence(
+        document, pages,
+        {"page": 1, "quote": "基金投资 -", "raw_text": "-", "source_ref": {"table": 0, "row": 99}},
+        table_cache=tables, header_maps=maps, rule_id="investment.asset_allocation",
+        row_label="基金投资", field_key="amount",
+    )
+
+    assert evidence["status"] == "LOCATED"
+    assert evidence["bbox"] == [100.0, 100.0, 180.0, 120.0]
+    assert evidence["source_ref_recovered"] == "unique_row_column_value"
+    document.close()
 
 
 def test_cross_page_section_keeps_subheadings_until_next_peer_module():

@@ -5,6 +5,28 @@ from app import main
 from app.audit import TaskAuditStore
 
 
+def test_other_service_recovery_keeps_live_owner_and_recovers_dead_owner(tmp_path, monkeypatch):
+    import os
+    store = TaskAuditStore(tmp_path / 'tasks')
+    monkeypatch.setattr(main, 'AUDIT_STORE', store)
+    monkeypatch.setattr(main, 'JOBS', {})
+    for task_id in ('live_owner_123', 'dead_owner_123'):
+        job = {'job_id': task_id, 'status': 'running', 'steps': {'comparison': 'running'}}
+        store.create_task(task_id, job, {}, {})
+    real_kill = os.kill
+    def check_owner(pid, signal):
+        if pid == 999999999:
+            raise ProcessLookupError()
+        return real_kill(pid, signal)
+    dead = store.load_job('dead_owner_123')
+    dead['owner_pid'] = 999999999
+    store.save_job('dead_owner_123', dead)
+    monkeypatch.setattr(main.os, 'kill', check_owner)
+    main._recover_interrupted_jobs()
+    assert store.load_job('live_owner_123')['status'] == 'running'
+    assert store.load_job('dead_owner_123')['status'] == 'failed'
+
+
 def test_job_history_and_artifact_endpoints_survive_process_memory_reset(tmp_path, monkeypatch):
     store = TaskAuditStore(tmp_path / "tasks")
     task_id = "history_task_123456"

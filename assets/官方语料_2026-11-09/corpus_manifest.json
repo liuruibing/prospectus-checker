@@ -1,0 +1,39 @@
+{
+  "downloaded_at": "2026-11-09T16:17:42+08:00",
+  "source_portal": "http://eid.csrc.gov.cn/fund/disclose/index.html",
+  "product_count": 5,
+  "pdf_count": 27,
+  "products": [
+    {
+      "fund_code": "000001",
+      "name": "华夏成长证券投资基金",
+      "directory": "华夏成长证券投资基金",
+      "pdf_count": 6
+    },
+    {
+      "fund_code": "510300",
+      "name": "华泰柏瑞沪深300交易型开放式指数证券投资基金",
+      "directory": "华泰柏瑞沪深300交易型开放式指数证券投资基金",
+      "pdf_count": 5
+    },
+    {
+      "fund_code": "050011",
+      "name": "博时信用债券投资基金",
+      "directory": "博时信用债券投资基金",
+      "pdf_count": 6
+    },
+    {
+      "fund_code": "513100",
+      "name": "纳斯达克100交易型开放式指数证券投资基金",
+      "directory": "纳斯达克100交易型开放式指数证券投资基金",
+      "pdf_count": 5
+    },
+    {
+      "fund_code": "000198",
+      "name": "天弘余额宝货币市场基金",
+      "directory": "天弘余额宝货币市场基金",
+      "pdf_count": 5
+    }
+  ],
+  "errors": []
+}

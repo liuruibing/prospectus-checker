@@ -1,0 +1,82 @@
+{
+  "code": "513100",
+  "fund_id": "3388",
+  "name": "纳斯达克100交易型开放式指数证券投资基金",
+  "manager": "国泰基金",
+  "type": "境外股票指数QDII-ETF",
+  "compiled": "2026-09-11",
+  "cutoff": "2026-06-30",
+  "note": "招书明确采用2026年第2季度报告投资组合；概要任务可用编制日前披露的2026年中期报告。包含境外投资顾问/托管、国家地区、GICS行业、人民币估值等结构，不能强套境内行业代码A-S。",
+  "source_index_url": "http://eid.csrc.gov.cn/fund/disclose/fund_detail.do?fundId=3388",
+  "downloaded_at": "2026-11-06T14:21:17+08:00",
+  "documents": [
+    {
+      "file": "2026-09-15_招募说明书更新_2026年第一号.pdf",
+      "relative_path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_招募说明书更新_2026年第一号.pdf",
+      "role": "prospectus",
+      "publication_date": "2026-09-15",
+      "official_instance_id": "1578626",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1578626",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "d2bcc6389dec8400b29bd3245c2cbe6a393b60c620cbe97f036767c7a938b507",
+      "bytes": 1332403,
+      "pages": 127,
+      "extractable_text_chars": 125800
+    },
+    {
+      "file": "2026-09-15_产品资料概要更新.pdf",
+      "relative_path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_产品资料概要更新.pdf",
+      "role": "product_summary",
+      "publication_date": "2026-09-15",
+      "official_instance_id": "1578629",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1578629",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "5f3d7ad5f1eb394d6ce6b06fef0c0a1966774a2a6268f6357fb7ed1822e32358",
+      "bytes": 579212,
+      "pages": 7,
+      "extractable_text_chars": 6854
+    },
+    {
+      "file": "2026-07-21_2026年第2季度报告.pdf",
+      "relative_path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+      "role": "prospectus_reference",
+      "publication_date": "2026-07-21",
+      "official_instance_id": "1533701",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1533701",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "783c9b7207fff7d0e4352c25210742b96bc14055502629509b55fb384d5b2a1e",
+      "bytes": 402274,
+      "pages": 18,
+      "extractable_text_chars": 12128
+    },
+    {
+      "file": "2026-08-31_2026年中期报告.pdf",
+      "relative_path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-08-31_2026年中期报告.pdf",
+      "role": "summary_reference",
+      "publication_date": "2026-08-31",
+      "official_instance_id": "1562728",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1562728",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "c6046aebd66c89321f6eb0a83f149d45a889c8e45c11ce8d88ec1888d1e6cb2f",
+      "bytes": 610314,
+      "pages": 68,
+      "extractable_text_chars": 68142
+    },
+    {
+      "file": "2026-03-30_2025年年度报告.pdf",
+      "relative_path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-03-30_2025年年度报告.pdf",
+      "role": "annual_reference",
+      "publication_date": "2026-03-30",
+      "official_instance_id": "1450741",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1450741",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "1552fac57ce98ee18648888749a3da43a56f16afbb2130f7d214e92df9defadc",
+      "bytes": 698720,
+      "pages": 82,
+      "extractable_text_chars": 81331
+    }
+  ],
+  "validation_scope": "下载文件为有效PDF、可读取页数和文本，核对了封面类型/产品/日期及招书投资组合截止日；未运行AI核对，未声明所有指标一致。",
+  "fee_note": "年度报告仅供对应年度实际费用等指标核对；概要预估年费用不能直接视为与年报实际费用同口径。",
+  "version_note": "同批披露的概要编制日可能早于招书公告日，补充条款须核实生效日和适用版本，不能仅凭同批文件推定所有字段适用。"
+}

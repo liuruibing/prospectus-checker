@@ -1,0 +1,9 @@
+{
+  "verified_pdf_count": 30,
+  "bytes": 21342375,
+  "fund_codes_disjoint_from_existing": true,
+  "pdf_hashes_disjoint_from_existing": true,
+  "all_pdf_pages_readable": true,
+  "all_summary_and_periodic_codes_verified": true,
+  "name_match_flags": []
+}

@@ -11,8 +11,9 @@ from langgraph.graph import END, START, StateGraph
 
 from app.comparison import compare_documents
 from app.extraction import analyze_document
-from app.preflight import preflight_documents
+from app.preflight import preflight_documents, preflight_summary_documents
 from app.pdf_worker import run_pdf
+from app.summary_check import RULE_VERSION as SUMMARY_RULE_VERSION, build_document_source_catalogue, compare_product_summary
 
 
 @dataclass
@@ -103,6 +104,167 @@ class ComparisonState(TypedDict, total=False):
     prospectus: dict[str, Any]
     periodic_report: dict[str, Any]
     result: dict[str, Any]
+
+
+class ProductSummaryState(TypedDict, total=False):
+    context: Any
+    documents: dict[str, dict[str, Any]]
+    preflight: dict[str, Any]
+    source_catalogues: dict[str, dict[str, Any]]
+    result: dict[str, Any]
+
+
+class ProductSummaryVerificationWorkflow:
+    """Chapter-oriented, evidence-addressed comparison for product summaries."""
+
+    id = "product-summary-verification"
+
+    def __init__(self) -> None:
+        graph = StateGraph(ProductSummaryState)
+
+        async def load_documents(state: ProductSummaryState) -> dict[str, Any]:
+            context = state["context"]
+            writer = get_stream_writer()
+            writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": "preflight", "step_status": "running", "message": "正在检查必需文件和来源角色"}})
+            payload = getattr(context, "input_val", {})
+            docs = payload.get("documents") if isinstance(payload, dict) else None
+            if not isinstance(docs, dict) or "product_summary" not in docs:
+                raise ValueError("PRODUCT_SUMMARY_REQUIRED")
+            if "periodic_report" not in docs:
+                raise ValueError("PERIODIC_REPORT_REQUIRED")
+            if set(docs) - {"product_summary", "periodic_report", "prospectus"}:
+                raise ValueError("UNSUPPORTED_DOCUMENT_ROLE")
+            if not docs["product_summary"].get("content") or not docs["periodic_report"].get("content"):
+                raise ValueError("REQUIRED_DOCUMENT_EMPTY")
+            preflight_payload = {"documents": {role: {"filename": doc["filename"], "content": doc["content"]} for role, doc in docs.items()}}
+            writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": "preflight", "step_status": "running", "message": "正在检查基金身份和报告时点"}})
+            preflight = await run_pdf(preflight_summary_documents, preflight_payload)
+            summary_metadata = preflight.get("product_summary") or {}
+            report_metadata = preflight.get("periodic_report") or {}
+            def exact_date(interval: dict[str, str] | None) -> str | None:
+                if not interval or interval.get("start") != interval.get("end"):
+                    return None
+                return interval.get("start")
+            docs = {
+                **docs,
+                "product_summary": {
+                    **docs["product_summary"],
+                    "metadata": {
+                        "compiled_date": exact_date(summary_metadata.get("date_interval")),
+                        "compiled_date_interval": summary_metadata.get("date_interval"),
+                        "compiled_date_quote": summary_metadata.get("date_quote"),
+                    },
+                },
+                "periodic_report": {
+                    **docs["periodic_report"],
+                    "metadata": {
+                        "sent_date": exact_date(report_metadata.get("report_send_date_interval")),
+                        "sent_date_interval": report_metadata.get("report_send_date_interval"),
+                        "sent_date_quote": report_metadata.get("report_send_date_quote"),
+                        "period_end": exact_date(report_metadata.get("date_interval")),
+                        "period_end_interval": report_metadata.get("date_interval"),
+                        "period_end_quote": report_metadata.get("date_quote"),
+                        "report_subtype": report_metadata.get("report_subtype"),
+                    },
+                },
+            }
+            if docs.get("prospectus") and preflight.get("prospectus"):
+                prospectus_metadata = preflight["prospectus"]
+                docs["prospectus"] = {
+                    **docs["prospectus"],
+                    "metadata": {
+                        "date_interval": prospectus_metadata.get("date_interval"),
+                        "date_label": prospectus_metadata.get("date_label"),
+                    },
+                }
+            if context.trace_callback:
+                context.trace_callback({"kind": "artifact", "path": "preflight/summary_metadata.json", "content": preflight})
+            writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": "preflight", "step_status": "completed", "message": "身份与时点检查完成"}})
+            return {"documents": docs, "preflight": preflight}
+
+        async def index_sources(state: ProductSummaryState) -> dict[str, Any]:
+            context = state["context"]
+            writer = get_stream_writer()
+            if state.get("preflight", {}).get("blocked"):
+                return {"source_catalogues": {}}
+            writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": "source_index", "step_status": "running", "message": "正在提取章节、表格片段与页内坐标"}})
+            documents = state["documents"]
+            catalogues = await asyncio.gather(*(
+                run_pdf(build_document_source_catalogue, doc["filename"], doc["content"], role)
+                for role, doc in documents.items()
+            ))
+            source_catalogues = dict(zip(documents, catalogues))
+            if context.trace_callback:
+                for role, catalogue in source_catalogues.items():
+                    context.trace_callback({"kind": "artifact", "path": f"source_index/{role}/catalogue.json", "content": catalogue})
+            writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": "source_index", "step_status": "completed", "message": "章节证据目录已建立"}})
+            return {"source_catalogues": source_catalogues}
+
+        async def compare(state: ProductSummaryState) -> dict[str, Any]:
+            context = state["context"]
+            writer = get_stream_writer()
+            if state.get("preflight", {}).get("blocked"):
+                docs = state["documents"]
+                result = {
+                    "schema_version": 3, "workflow_id": self.id, "rules_version": SUMMARY_RULE_VERSION,
+                    "input_contract_version": context.input_val.get("input_contract_version", "product-summary-input-v2"),
+                    "result_schema_version": 3,
+                    "status": "INCOMPATIBLE", "difference_count": 0, "unresolved_count": 0,
+                    "compared_count": 0, "skipped_count": 0, "not_checked_count": 0,
+                    "warnings": [state["preflight"].get("message") or "文件适配检查未通过。"],
+                    "documents": {role: {"filename": doc["filename"],
+                                         "page_count": (state["preflight"].get(role) or {}).get("page_count", 0),
+                                         "page_dimensions": [], "source_count": 0,
+                                         "preview_id": doc.get("preview_id"), "task_id": context.run_id}
+                                  for role, doc in docs.items()},
+                    "items": [], "preflight": state["preflight"], "run_id": context.run_id,
+                }
+                if context.trace_callback:
+                    context.trace_callback({"kind": "artifact", "path": "comparison/comparison_result.json", "content": result})
+                writer({"event": "workflow.completed", "data": {"runId": context.run_id, "result": result}})
+                return {"result": result}
+            def report_progress(stage: str, step_status: str, message: str) -> None:
+                writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": stage, "step_status": step_status, "message": message}})
+
+            report_progress("primary_lookup", "running", "正在章节中定位定期报告指标")
+            report_progress("fallback_lookup", "running", "等待主要来源判断")
+            report_progress("comparison", "running", "正在准备证据核对")
+            result = await compare_product_summary(
+                documents=state["documents"], provider=context.provider,
+                source_catalogues=state.get("source_catalogues"),
+                trace=context.trace_callback,
+                progress=report_progress,
+                historical=bool(context.input_val.get("historical", True)),
+            )
+            for role, doc in state["documents"].items():
+                preview = doc.get("preview_id")
+                result["documents"].setdefault(role, {})["preview_id"] = preview
+                result["documents"][role]["task_id"] = context.run_id
+            result["run_id"] = context.run_id
+            result["input_contract_version"] = context.input_val.get("input_contract_version", "product-summary-input-v2")
+            result["result_schema_version"] = result.get("schema_version", 3)
+            result["preflight"] = state.get("preflight", {})
+            if result["preflight"].get("identity_unconfirmed") or result["preflight"].get("report_not_available_at_compilation"):
+                result["warnings"] = sorted(set(result.get("warnings", []) + [result["preflight"].get("message", "身份或时点需要人工复核。")]))
+            trace = context.trace_callback
+            if trace:
+                trace({"kind": "artifact", "path": "comparison/comparison_result.json", "content": result})
+            writer({"event": "workflow.completed", "data": {"runId": context.run_id, "result": result}})
+            return {"result": result}
+
+        graph.add_node("load_documents", load_documents)
+        graph.add_node("index_sources", index_sources)
+        graph.add_node("compare", compare)
+        graph.add_edge(START, "load_documents")
+        graph.add_edge("load_documents", "index_sources")
+        graph.add_edge("index_sources", "compare")
+        graph.add_edge("compare", END)
+        self._graph = graph.compile()
+
+    async def stream(self, context: WorkflowContext) -> AsyncGenerator[dict[str, Any], None]:
+        async for mode, payload in self._graph.astream({"context": context}, stream_mode=["custom"]):
+            if mode == "custom":
+                yield payload
 
 
 def _direct_payload(context: Any) -> dict[str, Any] | None:

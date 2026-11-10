@@ -1,0 +1,20 @@
+{
+  "case_id": "000198_SUMMARY_PRIMARY",
+  "status": "PENDING_INDEPENDENT_PDF_REVIEW",
+  "documents": [
+    {
+      "role": "target",
+      "path": "assets/天弘余额宝货币市场基金/2026-06-26_产品资料概要更新.pdf",
+      "sha256": "a69b54f9b073ec9b18d822454a6d8ebae2568f84059775348da029dc3cfd35db",
+      "official_instance_id": "1511945"
+    },
+    {
+      "role": "primary_reference",
+      "path": "assets/天弘余额宝货币市场基金/2026-04-22_2026年第1季度报告.pdf",
+      "sha256": "b95534071ff13e01138e47975f62c86e27cfd8d5edec2ca9bc8fd7b198aa497a",
+      "official_instance_id": "1472474"
+    }
+  ],
+  "items": [],
+  "review_note": "尚未逐项对照原PDF建立独立预期，不得用于准确率验收。"
+}

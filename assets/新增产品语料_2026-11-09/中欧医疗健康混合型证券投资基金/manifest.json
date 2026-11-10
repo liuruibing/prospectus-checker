@@ -1,0 +1,141 @@
+{
+  "fund_code": "003095",
+  "name": "中欧医疗健康混合型证券投资基金",
+  "directory": "中欧医疗健康混合型证券投资基金",
+  "source_index_url": "http://eid.csrc.gov.cn/fund/disclose/fund_detail.do?fundId=815",
+  "summary_publication_date": "2026-09-21",
+  "documents": [
+    {
+      "file": "2026-09-21_招募说明书更新.pdf",
+      "relative_path": "中欧医疗健康混合型证券投资基金/2026-09-21_招募说明书更新.pdf",
+      "role": "prospectus",
+      "publication_date": "2026-09-21",
+      "official_title": "中欧医疗健康混合 ：2026招募说明书更新 2026-09-21",
+      "official_instance_id": "1582931",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1582931",
+      "downloaded_at": "2026-11-09T16:25:03+08:00",
+      "sha256": "b20fef1df703cd944aa6d90b8371ed47228778e1bba6a270963bf0b31b954fb2",
+      "bytes": 577646,
+      "pages": 126,
+      "extractable_text_chars": 94112,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE"
+    },
+    {
+      "file": "2026-09-21_产品资料概要更新.pdf",
+      "relative_path": "中欧医疗健康混合型证券投资基金/2026-09-21_产品资料概要更新.pdf",
+      "role": "product_summary",
+      "publication_date": "2026-09-21",
+      "official_title": "中欧医疗健康混合 ：2026基金产品资料概要更新 2026-09-21",
+      "official_instance_id": "1582885",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1582885",
+      "downloaded_at": "2026-11-09T16:25:03+08:00",
+      "sha256": "0b3358dc4e73b6d7e925eb96c70e9474d59f75aed2007bd05436f15e52219289",
+      "bytes": 277265,
+      "pages": 6,
+      "extractable_text_chars": 5224,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 1,
+          "quote": "品概况基金简称中欧医疗健康混合基金代码003095下属基金简称中欧医疗健康混合A"
+        }
+      ]
+    },
+    {
+      "file": "2026-08-29_2026年中期报告.pdf",
+      "relative_path": "中欧医疗健康混合型证券投资基金/2026-08-29_2026年中期报告.pdf",
+      "role": "interim",
+      "publication_date": "2026-08-29",
+      "official_title": "中欧医疗健康混合 ：2026中期报告 2026-08-29",
+      "official_instance_id": "1568718",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1568718",
+      "downloaded_at": "2026-11-09T16:25:04+08:00",
+      "sha256": "b2169cc248bb7a053087d9c1dd2763b834a9bc235ea428d19260ad01daaa4757",
+      "bytes": 608435,
+      "pages": 56,
+      "extractable_text_chars": 53693,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 5,
+          "quote": "资基金基金简称中欧医疗健康混合基金主代码003095基金运作方式契约型开放式基金合"
+        }
+      ]
+    },
+    {
+      "file": "2026-07-21_2026年第2季度报告.pdf",
+      "relative_path": "中欧医疗健康混合型证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2026-07-21",
+      "official_title": "中欧医疗健康混合 ：2026第二季度报告 2026-07-21",
+      "official_instance_id": "1535617",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1535617",
+      "downloaded_at": "2026-11-09T16:25:03+08:00",
+      "sha256": "075e81ea868bc69f9ede9a668118a736272262ee4fe7b64eb1ec6cb3a0c119af",
+      "bytes": 306792,
+      "pages": 13,
+      "extractable_text_chars": 9481,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 2,
+          "quote": "品概况基金简称中欧医疗健康混合基金主代码003095基金运作方式契约型开放式基金合"
+        }
+      ]
+    },
+    {
+      "file": "2026-04-22_2026年第1季度报告.pdf",
+      "relative_path": "中欧医疗健康混合型证券投资基金/2026-04-22_2026年第1季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2026-04-22",
+      "official_title": "中欧医疗健康混合 ：2026第一季度报告 2026-04-22",
+      "official_instance_id": "1477684",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1477684",
+      "downloaded_at": "2026-11-09T16:25:04+08:00",
+      "sha256": "81291ec748c29cc7015efc8b7ed68c3dffe2bbcef887686601210473d76f783c",
+      "bytes": 318904,
+      "pages": 13,
+      "extractable_text_chars": 9368,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 2,
+          "quote": "品概况基金简称中欧医疗健康混合基金主代码003095基金运作方式契约型开放式基金合"
+        }
+      ]
+    },
+    {
+      "file": "2026-03-31_2025年年度报告.pdf",
+      "relative_path": "中欧医疗健康混合型证券投资基金/2026-03-31_2025年年度报告.pdf",
+      "role": "annual",
+      "publication_date": "2026-03-31",
+      "official_title": "中欧医疗健康混合 ：2025年度报告 2026-03-31",
+      "official_instance_id": "1457846",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1457846",
+      "downloaded_at": "2026-11-09T16:25:04+08:00",
+      "sha256": "d3720237f6777c4fba41bce093dfd743802d81fb2e8bf6852b5ce23cd5eb096c",
+      "bytes": 810786,
+      "pages": 72,
+      "extractable_text_chars": 69342,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 5,
+          "quote": "资基金基金简称中欧医疗健康混合基金主代码003095基金运作方式契约型开放式基金合"
+        }
+      ]
+    }
+  ]
+}

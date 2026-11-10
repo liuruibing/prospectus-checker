@@ -16,10 +16,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from app.ai import make_provider
 from app.audit import TaskAuditStore
-from app.runtime import InvestmentComparisonWorkflow, WorkflowContext, WorkflowEngine, WorkflowRegistry
+from app.runtime import InvestmentComparisonWorkflow, ProductSummaryVerificationWorkflow, WorkflowContext, WorkflowEngine, WorkflowRegistry
+from app.summary_check import RULE_VERSION as SUMMARY_RULE_VERSION
+from app.rule_store import RuleConflictError, get_rule, list_rules, save_rule
+from app.versioning import runtime_source_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(os.getenv("PROSPECTUS_ENV_FILE", str(ROOT / ".env")), override=False)
@@ -48,6 +52,17 @@ def _recover_interrupted_jobs() -> None:
     for job in AUDIT_STORE.recent_jobs(100):
         if job.get("status") not in {"queued", "running"}:
             continue
+        owner_pid = job.get("owner_pid")
+        if isinstance(owner_pid, int) and owner_pid > 0:
+            try:
+                os.kill(owner_pid, 0)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                continue
+            else:
+                # Another local service may share this audit directory.
+                continue
         job["status"] = "failed"
         job["stage"] = "interrupted"
         job["message"] = "服务重启时任务尚未完成"
@@ -68,9 +83,47 @@ _recover_interrupted_jobs()
 
 
 app = FastAPI(title="招募说明书核对", version="0.1.0")
+PROCESS_SOURCE_FINGERPRINT = runtime_source_fingerprint(ROOT)
 provider = make_provider()
-workflow_registry = WorkflowRegistry([InvestmentComparisonWorkflow()])
+workflow_registry = WorkflowRegistry([InvestmentComparisonWorkflow(), ProductSummaryVerificationWorkflow()])
 workflow_engine = WorkflowEngine(workflow_registry)
+
+
+class RuleUpdatePayload(BaseModel):
+    content: str = Field(max_length=512_000)
+    expected_sha256: str = Field(min_length=64, max_length=64)
+
+
+@app.get("/api/rules")
+async def get_rules() -> dict:
+    try:
+        return {"rules": list_rules()}
+    except (OSError, UnicodeError) as exc:
+        raise HTTPException(status_code=500, detail="读取规则目录失败") from exc
+
+
+@app.get("/api/rules/{scope}/{filename}")
+async def get_rule_file(scope: str, filename: str) -> dict:
+    try:
+        return get_rule(scope, filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, UnicodeError) as exc:
+        raise HTTPException(status_code=500, detail="读取规则文件失败") from exc
+
+
+@app.put("/api/rules/{scope}/{filename}")
+async def update_rule_file(scope: str, filename: str, payload: RuleUpdatePayload) -> dict:
+    try:
+        return save_rule(scope, filename, payload.content, payload.expected_sha256)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuleConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (OSError, UnicodeError) as exc:
+        raise HTTPException(status_code=500, detail="保存规则文件失败") from exc
 
 
 def _save_preview(filename: str, content: bytes) -> str:
@@ -84,7 +137,10 @@ def _save_preview(filename: str, content: bytes) -> str:
 
 @app.get("/api/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "workflow": workflow_registry.list_ids()[0]}
+    return {
+        "status": "ok", "workflow": workflow_registry.list_ids()[0],
+        "source_fingerprint": PROCESS_SOURCE_FINGERPRINT,
+    }
 
 
 @app.get("/v1/workflows")
@@ -219,12 +275,16 @@ def _runtime_trace_info() -> dict:
     return {
         "provider": type(provider).__name__,
         "model": getattr(provider, "model_name", None),
+        "reasoning_effort": getattr(provider, "reasoning_effort", None),
+        "request_interval_seconds": getattr(provider, "request_interval", None),
         "python": os.sys.version.split()[0],
+        "source_fingerprint": PROCESS_SOURCE_FINGERPRINT,
+        "summary_rules_version": SUMMARY_RULE_VERSION,
     }
 
 
 async def _process_job(job_id: str, workflow_id: str, context: WorkflowContext) -> None:
-    steps = {"preflight": "queued", "prospectus": "queued", "periodic_report": "queued", "comparison": "queued"}
+    steps = dict(context.input_val.get("steps") or {"preflight": "queued", "prospectus": "queued", "periodic_report": "queued", "comparison": "queued"})
     active_stage = None
     _update_job(
         job_id, status="running", stage="starting", message="后台核对已开始",
@@ -324,6 +384,7 @@ async def create_comparison_job(
         job = {
             "job_id": job_id,
             "run_id": job_id,
+            "workflow_id": "prospectus-periodic-comparison",
             "status": "queued",
             "stage": "queued",
             "message": "已加入后台核对队列",
@@ -360,6 +421,71 @@ async def create_comparison_job(
         JOB_TASKS[job_id] = asyncio.create_task(
             _process_job(job_id, "prospectus-periodic-comparison", context)
         )
+    return _job_view(job)
+
+
+async def _read_optional_pdf(upload: UploadFile | None, role: str) -> tuple[str, bytes] | None:
+    if upload is None or not upload.filename:
+        return None
+    content = await read_pdf(upload)
+    return Path(upload.filename).name, content
+
+
+@app.post("/api/product-summary/jobs", status_code=202)
+async def create_product_summary_job(
+    product_summary: UploadFile = File(...),
+    periodic_report: UploadFile = File(...),
+    prospectus: UploadFile | None = File(None),
+) -> dict:
+    if not periodic_report or not periodic_report.filename:
+        raise HTTPException(status_code=422, detail="产品资料概要核对必须上传定期报告")
+    uploads = {"product_summary": product_summary, "periodic_report": periodic_report, "prospectus": prospectus}
+    loaded = await asyncio.gather(*(_read_optional_pdf(upload, role) for role, upload in uploads.items()))
+    source_docs: dict[str, dict] = {}
+    stored_docs: dict[str, tuple[str, bytes]] = {}
+    for role, value in zip(uploads, loaded):
+        if value is None:
+            continue
+        filename, content = value
+        source_docs[role] = {
+            "filename": filename, "content": content,
+            "preview_id": _save_preview(filename, content),
+            "metadata": {},
+        }
+        stored_docs[role] = (filename, content)
+    if "product_summary" not in source_docs or "periodic_report" not in source_docs:
+        raise HTTPException(status_code=422, detail="产品资料概要和定期报告为必需文件")
+    run_id = secrets.token_urlsafe(18)
+    context = WorkflowContext(
+        input_val={"documents": source_docs, "input_contract_version": "product-summary-input-v2",
+                   "rules_version": SUMMARY_RULE_VERSION, "result_schema_version": 3,
+                   "steps": {"preflight": "queued", "source_index": "queued", "primary_lookup": "queued", "fallback_lookup": "queued", "comparison": "queued"}},
+        provider=provider, run_id=run_id,
+    )
+    job_id, now = run_id, _utc_now()
+    steps = dict(context.input_val["steps"])
+    job = {
+        "job_id": job_id, "run_id": run_id, "workflow_id": "product-summary-verification",
+        "input_contract_version": "product-summary-input-v2", "rules_version": SUMMARY_RULE_VERSION,
+        "result_schema_version": 3,
+        "status": "queued", "stage": "queued", "message": "已加入后台核对队列",
+        "created_at": now, "started_at": None, "updated_at": now, "completed_at": None,
+        "steps": steps, "error": None, "result": None,
+        "document_names": {role: value[0] for role, value in stored_docs.items()},
+    }
+    context.trace_callback = lambda item: _record_task_trace(job_id, item)
+    with JOB_LOCK:
+        while len(JOBS) >= JOB_LIMIT:
+            completed_id = next((key for key, value in JOBS.items() if value["status"] in ("completed", "failed")), None)
+            if completed_id is None:
+                raise HTTPException(status_code=429, detail="后台核对任务过多，请稍后再提交")
+            JOBS.pop(completed_id)
+        try:
+            AUDIT_STORE.create_task(job_id, job, stored_docs, _runtime_trace_info())
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"任务追踪记录初始化失败：{type(exc).__name__}: {exc}") from exc
+        JOBS[job_id] = job
+        JOB_TASKS[job_id] = asyncio.create_task(_process_job(job_id, "product-summary-verification", context))
     return _job_view(job)
 
 
@@ -476,7 +602,7 @@ async def render_page(preview_id: str, page_number: int, scale: float = 1.5) -> 
 
 @app.get("/api/jobs/{job_id}/documents/{document_role}/pages/{page_number}/image")
 async def render_job_page(job_id: str, document_role: str, page_number: int, scale: float = 1.5) -> Response:
-    if document_role not in {"prospectus", "periodic_report"}:
+    if document_role not in {"prospectus", "periodic_report", "product_summary", "annual_report"}:
         raise HTTPException(status_code=404, detail="任务文档不存在")
     try:
         pdf_path = AUDIT_STORE.artifact_path(job_id, f"inputs/{document_role}.pdf")

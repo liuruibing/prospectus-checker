@@ -1,15 +1,16 @@
+import hashlib
 import json
 import asyncio
 from pathlib import Path
 
 from app import extraction
-from app.chapter_sources import ChapterCache, bind_sources, source_catalogue, source_gaps
+from app.chapter_sources import ChapterCache, bind_sources, resolve_data_columns, source_catalogue, source_gaps
 from app.domain import MODULE_RULES
 
 
 def test_cross_page_chapters_cover_all_real_source_rows():
     rule_texts = {rule["rule_id"]: rule["file"].read_text(encoding="utf-8") for rule in MODULE_RULES}
-    import anydoc
+    from app.pdf_document import page_tables, verified_conversion
 
     for filename, expected_pages in [
         ("易方达上证50交易型开放式指数证券投资基金更新的招募说明书.pdf", [55, 56]),
@@ -20,10 +21,12 @@ def test_cross_page_chapters_cover_all_real_source_rows():
         content = path.read_bytes()
         document, pages = extraction._read_pdf(content, filename)
         try:
-            markdown = anydoc.to_markdown_bytes(content, "pdf")
+            conversion = verified_conversion(content)
+            markdown = conversion["reader_markdown"]
             contexts = extraction._chapter_contexts(extraction._anydoc_sections(markdown, rule_texts), pages, rule_texts)
             selected = {page["physical_page"] for context in contexts.values() for page in context["physical_pages"]}
-            tables = extraction._collect_tables(document, selected)
+            native = page_tables(conversion)
+            tables = {page: native.get(page, []) for page in selected}
             maps = extraction._header_column_maps(
                 tables, {rule["rule_id"]: extraction._header_aliases(rule_texts[rule["rule_id"]]) for rule in MODULE_RULES},
                 column_tolerance=extraction._cross_page_column_tolerance(extraction.COMMON_RULE_FILE.read_text()),
@@ -31,9 +34,14 @@ def test_cross_page_chapters_cover_all_real_source_rows():
             assert [page["physical_page"] for page in contexts[MODULE_RULES[1]["rule_id"]]["physical_pages"]] == expected_pages
             for rule, expected in zip(MODULE_RULES, [12, 20, 10]):
                 context = contexts[rule["rule_id"]]
-                sources = source_catalogue(context, rule, tables, maps)
+                sources = source_catalogue(context, rule, tables, maps, hashlib.sha256(content).hexdigest())
                 assert len(sources) == expected
                 assert source_gaps(context, sources, rule) == []
+                assert all(source["source_kind"] == "table_row" for source in sources.values())
+                assert all(source["document_role"] == "periodic_report" for source in sources.values())
+                assert all(len(source["source_id"]) == 24 for source in sources.values())
+                assert all(source["bbox"] and len(source["bbox"]) == 4 for source in sources.values())
+                assert all(source["raw_text"] and source["page"] > 0 for source in sources.values())
                 money_field = "amount" if rule is MODULE_RULES[0] else "fair_value"
                 assert all(source["fields"][money_field]["unit"] == "元" for source in sources.values())
                 if rule is MODULE_RULES[1]:
@@ -61,6 +69,73 @@ def test_source_binding_rejects_missing_duplicate_and_foreign_rows_and_preserves
     assert len(bound["rows"]) == 1
     assert bound["source_coverage"]["missing"] == ["p3t0r1"]
     assert bound["source_warnings"]
+
+
+def test_source_gaps_detects_rule_named_plain_text_continuation_row():
+    rule = MODULE_RULES[0]
+    context = {"section_markdown": "|8|其他各项资产|10|1|\n第 44 页 共 65 页\n合计 110 100 注：表格口径说明。"}
+    records = {"row1": {"cells": ["8", "其他各项资产", "10", "1"]}}
+
+    gaps = source_gaps(context, records, rule)
+
+    assert gaps == ["合计 110 100 注：表格口径说明。"]
+
+
+def test_merged_header_columns_bind_to_body_cells_by_horizontal_geometry():
+    rule = MODULE_RULES[1]
+    table = {
+        "matrix": [
+            ["", "代码", "", "", "行业类别", "公允价值（元）", "占基金资产净值比例(%)", ""],
+            ["A", None, None, "农、林、牧、渔业", None, "10.00", "0.10", None],
+        ],
+        "columns": 8,
+        "cells_by_row": [
+            [[76, 0, 82, 10], [82, 0, 111, 10], [111, 0, 117, 10], [117, 0, 122, 10],
+             [122, 0, 208, 10], [208, 0, 369, 10], [369, 0, 513, 10], [513, 0, 519, 10]],
+            [[76, 10, 117, 30], None, None, [117, 10, 208, 30], None,
+             [208, 10, 369, 30], [369, 10, 519, 30], None],
+        ],
+        "page_width": 595,
+    }
+    mapping = {"industry_code": 1, "industry_name": 4, "fair_value": 5, "ratio_of_net_assets": 6}
+    resolved = resolve_data_columns(table, mapping, 1)
+    assert resolved == {"industry_code": 0, "industry_name": 3, "fair_value": 5, "ratio_of_net_assets": 6}
+
+    context = {"section_markdown": "|A|农、林、牧、渔业|10.00|0.10|", "physical_pages": [{"physical_page": 10}]}
+    records = source_catalogue(context, rule, {10: [table]}, {rule["rule_id"]: {10: {0: mapping}}})
+    record = next(iter(records.values()))
+    assert record["mapping"] == resolved
+    assert record["fields"]["fair_value"]["raw_text"] == "10.00"
+    assert record["fields"]["ratio_of_net_assets"]["raw_text"] == "0.10"
+
+
+def test_headerless_continuation_inherits_column_centers_across_different_grid_counts():
+    rule = MODULE_RULES[1]
+    previous = {
+        "matrix": [["", "代码", "", "", "行业类别", "公允价值（元）", "占基金资产净值比例(%)", ""],
+                   ["A", None, None, "农业", None, "10.00", "0.10", ""]],
+        "columns": 8,
+        "cells_by_row": [
+            [[76, 0, 82, 10], [82, 0, 111, 10], [111, 0, 117, 10], [117, 0, 122, 10],
+             [122, 0, 208, 10], [208, 0, 369, 10], [369, 0, 513, 10], [513, 0, 519, 10]],
+            [[76, 10, 117, 30], None, None, [117, 10, 208, 30], None,
+             [208, 10, 369, 30], [369, 10, 519, 30], None],
+        ], "page_width": 595,
+    }
+    continued = {
+        "matrix": [["B", "采矿业", "20.00", "0.20"]],
+        "columns": 4,
+        "cells_by_row": [[[76, 0, 117, 20], [117, 0, 208, 20], [208, 0, 369, 20], [369, 0, 519, 20]]],
+        "page_width": 595,
+    }
+    rules = {rule["rule_id"]: extraction._header_aliases(rule["file"].read_text(encoding="utf-8"))}
+    maps = extraction._header_column_maps({1: [previous], 2: [continued]}, rules, column_tolerance=0.02)
+
+    inherited = maps[rule["rule_id"]][2][0]
+    assert extraction._tables_have_compatible_columns(previous, continued, 0.02) is False
+    assert resolve_data_columns(continued, inherited, 0, rule["rule_id"]) == {
+        "industry_code": 0, "industry_name": 1, "fair_value": 2, "ratio_of_net_assets": 3,
+    }
 
 
 def test_cached_chapter_is_invalidated_by_rules_document_and_model_and_corruption(tmp_path, monkeypatch):

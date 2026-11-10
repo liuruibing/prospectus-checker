@@ -19,6 +19,21 @@ FIELD_LABELS = {
     "row": "项目", "module": "模块", "row_identity": "行标识",
 }
 
+_UNIT_ALIASES = {
+    "人民币元": "元",
+    "人民币 元": "元",
+    "rmb元": "元",
+    "cny元": "元",
+    "人民币百分比": "%",
+    "百分比": "%",
+    "％": "%",
+}
+
+
+def _canonical_unit(unit: Any) -> str:
+    value = normalize_text(str(unit or "")).lower()
+    return _UNIT_ALIASES.get(value, value)
+
 def _row_has_only_empty_metrics(module_id: str, row: dict[str, Any]) -> bool:
     fields = row.get("fields", {})
     return all(
@@ -29,6 +44,82 @@ def _row_has_only_empty_metrics(module_id: str, row: dict[str, Any]) -> bool:
     )
 
 
+def _investment_scope_key(value: Any) -> str:
+    investment = normalize_text(value or "unknown")
+    return {"指数投资": "index", "指数": "index", "index": "index",
+            "积极投资": "active", "积极": "active", "active": "active"}.get(investment, investment)
+
+
+def _industry_identity_scope(row: dict[str, Any]) -> str:
+    market = normalize_text(row.get("market_scope") or "unknown")
+    investment = _investment_scope_key(row.get("investment_scope"))
+    return f"{market}:{investment}"
+
+
+def _disclosure_key(disclosure: dict[str, Any]) -> tuple[str, str] | None:
+    period = "".join(ch for ch in str(disclosure.get("period_end") or "") if ch.isdigit())
+    scope = disclosure.get("scope")
+    if not period or not isinstance(scope, dict) or not scope:
+        return None
+    normalized = tuple(sorted((normalize_text(key), normalize_text(value)) for key, value in scope.items()))
+    if any(not key or not value or value.casefold() in {"unknown", "未知", "不确定"} for key, value in normalized):
+        return None
+    return period, repr(normalized)
+
+
+def _compare_empty_disclosures(
+    left_module: dict[str, Any], right_module: dict[str, Any],
+) -> str:
+    """Compare verified chapter-level disclosures when neither side has table rows."""
+    left = left_module.get("disclosures") or []
+    right = right_module.get("disclosures") or []
+    if not left or not right:
+        return "UNRESOLVED_STRUCTURE"
+    if any(module.get("status") != "EXTRACTED" for module in (left_module, right_module)):
+        return "UNRESOLVED_STRUCTURE"
+    left_keys = [_disclosure_key(item) for item in left]
+    right_keys = [_disclosure_key(item) for item in right]
+    if any(key is None for key in (*left_keys, *right_keys)):
+        return "UNRESOLVED_STRUCTURE"
+    if any(item.get("status") != "NO_DATA" for item in (*left, *right)):
+        return "UNRESOLVED_STRUCTURE"
+    if sorted(left_keys) == sorted(right_keys):
+        return "MATCH"
+    return "UNRESOLVED_STRUCTURE"
+
+
+def _holdings_coverage(module: dict[str, Any]) -> tuple[str, int | None] | None:
+    scope = module.get("scope") or {}
+    if scope.get("disclosure_scope") == "all":
+        return "all", None
+    if scope.get("disclosure_scope") == "top_n":
+        try:
+            limit = int(scope.get("limit"))
+        except (TypeError, ValueError):
+            return None
+        if limit > 0:
+            return "top_n", limit
+    return None
+
+
+def _reference_covers_target_coverage(
+    target: tuple[str, int | None] | None,
+    reference: tuple[str, int | None] | None,
+) -> bool:
+    """The periodic report may contain a superset of the prospectus target rows."""
+    if target is None or reference is None:
+        return False
+    target_kind, target_limit = target
+    reference_kind, reference_limit = reference
+    if target_kind == "all":
+        return reference_kind == "all"
+    if target_kind != "top_n" or target_limit is None:
+        return False
+    return reference_kind == "all" or (
+        reference_kind == "top_n" and reference_limit is not None and reference_limit >= target_limit
+    )
+
+
 
 def _numeric_equal(left: dict[str, Any], right: dict[str, Any]) -> bool | None:
     left_kind, right_kind = left.get("value_kind"), right.get("value_kind")
@@ -36,7 +127,8 @@ def _numeric_equal(left: dict[str, Any], right: dict[str, Any]) -> bool | None:
         return left_kind == right_kind
     if left_kind != "NUMBER" or right_kind != "NUMBER":
         return None
-    if left.get("unit") and right.get("unit") and left["unit"] != right["unit"]:
+    left_unit, right_unit = _canonical_unit(left.get("unit")), _canonical_unit(right.get("unit"))
+    if left_unit and right_unit and left_unit != right_unit:
         return None
     try:
         return Decimal(str(left["normalized_value"])) == Decimal(str(right["normalized_value"]))
@@ -50,10 +142,11 @@ def _row_key(module_id: str, row: dict[str, Any], counts: dict[str, int]) -> tup
         if key:
             return f"{row.get('parent_key') or ''}/{key}", True
         label = normalize_text(row.get("label"))
-        return (f"unmapped:{row.get('parent_key') or ''}/{label}", False) if label else (None, False)
+        fallback = f"{row.get('parent_key') or ''}/{label}"
+        return (f"unmapped:{fallback}", counts.get(f"unmapped:{fallback}", 0) == 1) if label else (None, False)
     if module_id == "investment.industry_stock_portfolio":
-        scope = str(row.get("market_scope") or "unknown")
-        if scope not in {"domestic", "hk_connect", "other"}:
+        scope = _industry_identity_scope(row)
+        if scope.split(":", 1)[0] not in {"domestic", "hk_connect", "other"} or scope.endswith(":unknown"):
             return None, False
         name = normalize_text(row.get("industry_name") or row.get("label"))
         if name == "合计":
@@ -65,9 +158,9 @@ def _row_key(module_id: str, row: dict[str, Any], counts: dict[str, int]) -> tup
         if name and counts.get(f"{scope}:{name}", 0) == 1:
             return f"{scope}:name:{name}", False
         return None, False
-    scope = str(row.get("market_scope") or "unknown")
+    scope = f"{normalize_text(row.get('market_scope') or 'unknown')}:{_investment_scope_key(row.get('investment_scope'))}"
     code = normalize_stock_code(row.get("stock_code"))
-    if not code or counts.get(f"{scope}:{code}", 0) > 1 or (scope == "unknown" and counts.get(f"all:{code}", 0) > 1):
+    if not code or counts.get(f"{scope}:{code}", 0) > 1 or (scope.startswith("unknown:") and counts.get(f"all:{code}", 0) > 1):
         return None, False
     return f"{scope}:{code}", True
 
@@ -75,11 +168,17 @@ def _row_key(module_id: str, row: dict[str, Any], counts: dict[str, int]) -> tup
 def _row_index(module_id: str, rows: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], set[str]]:
     counts: dict[str, int] = {}
     for row in rows:
-        if module_id == "investment.industry_stock_portfolio":
-            scope = str(row.get("market_scope") or "unknown")
+        if module_id == "investment.asset_allocation":
+            label = normalize_text(row.get("label"))
+            if label:
+                identity = f"{row.get('parent_key') or ''}/{label}"
+                counts[f"unmapped:{identity}"] = counts.get(f"unmapped:{identity}", 0) + 1
+            continue
+        elif module_id == "investment.industry_stock_portfolio":
+            scope = _industry_identity_scope(row)
             identity = normalize_identifier(row.get("industry_code")) or normalize_text(row.get("industry_name") or row.get("label"))
         elif module_id == "investment.stock_holdings":
-            scope = str(row.get("market_scope") or "unknown")
+            scope = f"{normalize_text(row.get('market_scope') or 'unknown')}:{_investment_scope_key(row.get('investment_scope'))}"
             identity = normalize_stock_code(row.get("stock_code"))
             if identity:
                 counts[f"all:{identity}"] = counts.get(f"all:{identity}", 0) + 1
@@ -118,7 +217,8 @@ def _align_stock_markets(left_rows: list[dict], right_rows: list[dict]) -> tuple
             continue
         first, second = a[0], b[0]
         market_a, market_b = first.get("market_scope") or "unknown", second.get("market_scope") or "unknown"
-        scope_a, scope_b = first.get("investment_scope") or "unknown", second.get("investment_scope") or "unknown"
+        scope_a = _investment_scope_key(first.get("investment_scope"))
+        scope_b = _investment_scope_key(second.get("investment_scope"))
         if (market_a != "unknown" and market_b != "unknown" and market_a != market_b) or (
             scope_a != "unknown" and scope_b != "unknown" and scope_a != scope_b
         ):
@@ -157,8 +257,73 @@ def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[st
                 "prospectus_rows": (left_module or {}).get("rows", []), "periodic_rows": (right_module or {}).get("rows", [])}
     left_rows = left_module.get("rows", [])
     right_rows = right_module.get("rows", [])
+    if bool(left_rows) != bool(right_rows):
+        empty_module = right_module if left_rows else left_module
+        empty_claims = empty_module.get("disclosures") or []
+        if (empty_claims and all(item.get("status") == "NO_DATA" and _disclosure_key(item) is not None for item in empty_claims)
+                and all(module.get("status") == "EXTRACTED" for module in (left_module, right_module))):
+            difference = _field_difference(
+                module_id, title, "disclosure_status", None, None, "MISMATCH",
+                "一份文档明确披露无数据，另一份文档披露了数据行",
+            )
+            return {
+                "rule_id": module_id, "title": title, "status": "MISMATCH",
+                "differences": [difference],
+                "review_message": "两份文档的披露状态不同。",
+                "prospectus_rows": left_rows, "periodic_rows": right_rows,
+            }
+    if not left_rows and not right_rows:
+        def with_document_period(module, doc):
+            return {**module, "disclosures": [
+                {**claim, "period_end": claim.get("period_end") or doc.get("document_info", {}).get("period_end")}
+                for claim in module.get("disclosures", [])
+            ]}
+        disclosure_status = _compare_empty_disclosures(
+            with_document_period(left_module, left_doc), with_document_period(right_module, right_doc),
+        )
+        if disclosure_status:
+            return {
+                "rule_id": module_id,
+                "title": title,
+                "status": disclosure_status,
+                "differences": [] if disclosure_status == "MATCH" else [
+                    _field_difference(module_id, title, "disclosure_status", None, None,
+                                      "MISMATCH" if disclosure_status == "MISMATCH" else "UNRESOLVED",
+                                      "两份文档的披露状态或适用范围不同" if disclosure_status == "MISMATCH"
+                                      else "披露状态或适用范围证据不足，需复核")
+                ],
+                "review_message": "两侧原文均明确披露无数据，报告期及适用范围一致。" if disclosure_status == "MATCH" else "两份文档的披露原文、报告期或适用范围未能确认完整对应。" + " ".join(
+                    message for module in (left_module, right_module) for message in module.get("completeness_warnings", [])
+                ),
+                "prospectus_disclosures": left_module.get("disclosures", []),
+                "periodic_disclosures": right_module.get("disclosures", []),
+                "prospectus_rows": [],
+                "periodic_rows": [],
+            }
+    disclosure_ranges = None
     if module_id == "investment.stock_holdings":
+        left_coverage, right_coverage = _holdings_coverage(left_module), _holdings_coverage(right_module)
+        if not _reference_covers_target_coverage(left_coverage, right_coverage):
+            return {
+                "rule_id": module_id, "title": title, "status": "UNRESOLVED_STRUCTURE", "differences": [],
+                "review_message": "定期报告披露范围不足以覆盖招募说明书中的核对项目，暂不判定证券单侧缺失。",
+                "prospectus_rows": left_rows, "periodic_rows": right_rows,
+                "disclosure_ranges": {"prospectus": left_coverage, "periodic_report": right_coverage},
+            }
+        disclosure_ranges = {"prospectus": left_coverage, "periodic_report": right_coverage}
         left_rows, right_rows = _align_stock_markets(left_rows, right_rows)
+        if left_coverage and left_coverage[0] == "top_n":
+            # The prospectus defines the requested comparison set. Ignore report-only
+            # securities while retaining all report rows for any prospectus security.
+            target_codes = {
+                normalize_stock_code(row.get("stock_code"))
+                for row in left_rows
+                if normalize_stock_code(row.get("stock_code"))
+            }
+            right_rows = [
+                row for row in right_rows
+                if normalize_stock_code(row.get("stock_code")) in target_codes
+            ]
     schema_issue = any(row.get("schema_warnings") for row in (*left_rows, *right_rows))
     if schema_issue:
         return {
@@ -179,6 +344,7 @@ def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[st
         left_module.get("status") != "EXTRACTED"
         or right_module.get("status") != "EXTRACTED"
         or identity_unresolved
+        or not left_rows or not right_rows
     )
     all_keys = sorted(set(left_index) | set(right_index))
     for row_key in all_keys:
@@ -260,6 +426,7 @@ def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[st
         "review_message": review_message,
         "prospectus_rows": left_rows,
         "periodic_rows": right_rows,
+        **({"disclosure_ranges": disclosure_ranges} if disclosure_ranges is not None else {}),
     }
 
 

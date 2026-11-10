@@ -1,0 +1,519 @@
+{
+  "case_id": "050011_SUMMARY_PRIMARY",
+  "status": "READY_WITH_UNCONFIRMED_ITEMS",
+  "documents": [
+    {
+      "role": "target",
+      "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+      "sha256": "c393b01622c5bc64293629604c5a9a0d367ac8820000cb4f1f21b9060c26bb6c",
+      "official_instance_id": "1581606"
+    },
+    {
+      "role": "primary_reference",
+      "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+      "sha256": "388ebfbdae6e8a02767aa81f2e15ebb558962b7095f90ec5387f0d5f53b2511c",
+      "official_instance_id": "1562472"
+    }
+  ],
+  "items": [
+    {
+      "key": "fund_short_name",
+      "item_id": "fund_short_name",
+      "label": "基金简称",
+      "target_value": "博时信用债券；下属博时信用债券A/B",
+      "reference_value": "博时信用债券；下属博时信用债券A/B",
+      "expected_value": "博时信用债券；下属博时信用债券A/B",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 5,
+        "quote": "基金简称 博时信用债券；下属分级基金简称 博时信用债券A/B、博时信用债券C、博时信用债券R",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 1,
+          "quote": "基金简称 博时信用债券；下属基金简称 博时信用债券A/B",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "目标A/B份额须对应报告A/B行，不以C或R行比较。",
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "fund_code",
+      "item_id": "fund_code",
+      "label": "基金代码",
+      "target_value": "主代码050011；A/B前端050011、后端051011",
+      "reference_value": "主代码050011；A/B交易代码050011",
+      "expected_value": "主代码050011；A/B交易代码050011",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "UNRESOLVED",
+      "period_applicability": "code_role_and_share_class_matched",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 5,
+        "quote": "基金主代码050011；下属分级基金交易代码：A/B为050011、C为050111、R为960027",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 1,
+          "quote": "基金代码050011；下属基金代码050011；050011（前端）、051011（后端）",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "主代码和A/B前端可对应；指定报告没有明示A/B后端051011，不能拿C代码050111替代，也不能仅凭共同050011宣称整组代码完全一致。",
+      "expected_selected_reference_role": null
+    },
+    {
+      "key": "manager",
+      "item_id": "manager",
+      "label": "基金管理人",
+      "target_value": "博时基金管理有限公司",
+      "reference_value": "博时基金管理有限公司",
+      "expected_value": "博时基金管理有限公司",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 5,
+        "quote": "基金管理人 博时基金管理有限公司",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 1,
+          "quote": "基金管理人 博时基金管理有限公司",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "custodian",
+      "item_id": "custodian",
+      "label": "基金托管人",
+      "target_value": "中国工商银行股份有限公司",
+      "reference_value": "中国工商银行股份有限公司",
+      "expected_value": "中国工商银行股份有限公司",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 5,
+        "quote": "基金托管人 中国工商银行股份有限公司",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 1,
+          "quote": "基金托管人 中国工商银行股份有限公司",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "contract_start_date",
+      "item_id": "contract_start_date",
+      "label": "基金合同生效日",
+      "target_value": "2009-06-10",
+      "reference_value": "2009-06-10",
+      "expected_value": "2009-06-10",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 5,
+        "quote": "基金合同生效日 2009年6月10日",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 1,
+          "quote": "基金合同生效日 2009-06-10",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "fund_managers",
+      "item_id": "fund_managers",
+      "label": "基金经理",
+      "target_value": "过钧",
+      "reference_value": "过钧",
+      "expected_value": "过钧",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "same_named_manager",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 10,
+        "quote": "4.1.2基金经理简介：过钧；首席基金经理/基金经理",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 1,
+          "quote": "基金经理 过钧",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "manager_start_dates",
+      "item_id": "manager_start_dates",
+      "label": "开始担任本基金经理的日期",
+      "target_value": "过钧：2009-06-10",
+      "reference_value": "过钧：2009-06-10",
+      "expected_value": "过钧：2009-06-10",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "date_bound_to_named_manager",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 10,
+        "quote": "过钧；任本基金的基金经理期限：任职日期2009-06-10，离任日期-；简历续PDF11-12页",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 1,
+          "quote": "过钧；开始担任本基金基金经理的日期2009-06-10；证券从业日期另列2001-07-01",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "不得将证券从业日期2001-07-01误作本基金任职日期。",
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "exchange_names",
+      "item_id": "exchange_names",
+      "label": "场内简称与扩位证券简称",
+      "target_value": null,
+      "reference_value": "NOT_APPLICABLE",
+      "expected_value": "NOT_APPLICABLE",
+      "status": "NOT_APPLICABLE",
+      "expected_comparison_status": "NOT_CHECKED",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 5,
+        "quote": "基金运作方式为契约型开放式，基本情况未列场内简称/扩位证券简称。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 1,
+          "quote": "产品概况没有场内简称、扩位证券简称字段；普通开放式基金",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "该指定目标/报告均无可核对的交易所简称字段。",
+      "expected_selected_reference_role": null
+    },
+    {
+      "key": "investment_objective",
+      "item_id": "investment_objective",
+      "label": "投资目标",
+      "target_value": "在谨慎投资的前提下，本基金力争获取高于业绩比较基准的投资收益。",
+      "reference_value": "在谨慎投资的前提下，本基金力争获取高于业绩比较基准的投资收益。",
+      "expected_value": "在谨慎投资的前提下，本基金力争获取高于业绩比较基准的投资收益。",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 5,
+        "quote": "投资目标 在谨慎投资的前提下，本基金力争获取高于业绩比较基准的投资收益。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 1,
+          "quote": "投资目标 在谨慎投资的前提下，本基金力争获取高于业绩比较基准的投资收益。",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "investment_strategy",
+      "item_id": "investment_strategy",
+      "label": "主要投资策略",
+      "target_value": "本基金为债券型基金，通过自上而下和自下而上相结合、定性分析和定量分析相补充的方法，在债券、股票和现金等资产类之间进行相对稳定的动态配置；包括资产配置、固定收益类品种、权益类品种策略；固定收益灵活运用期限结构、信用、互换、息差、期权策略；权益类含一级市场申购和二级市场股票投资。",
+      "reference_value": "本基金为债券型基金，通过自上而下和自下而上相结合、定性分析和定量分析相补充的方法，在债券、股票和现金等资产类之间进行相对稳定的动态配置；包括资产配置、固定收益类品种、权益类品种策略；固定收益灵活运用期限结构、信用、互换、息差、期权策略；权益类含一级市场申购和二级市场股票投资。",
+      "expected_value": "本基金为债券型基金，通过自上而下和自下而上相结合、定性分析和定量分析相补充的方法，在债券、股票和现金等资产类之间进行相对稳定的动态配置；包括资产配置、固定收益类品种、权益类品种策略；固定收益灵活运用期限结构、信用、互换、息差、期权策略；权益类含一级市场申购和二级市场股票投资。",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 5,
+        "quote": "本基金为债券型基金，通过自上而下和自下而上相结合、定性分析和定量分析相补充的方法，在债券、股票和现金等资产类之间进行相对稳定的动态配置；包括资产配置、固定收益类品种、权益类品种策略；固定收益灵活运用期限结构、信用、互换、息差、期权策略；权益类含一级市场申购和二级市场股票投资。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": "1-2",
+          "quote": "本基金为债券型基金，通过自上而下和自下而上相结合、定性分析和定量分析相补充的方法，在债券、股票和现金等资产类之间进行相对稳定的动态配置；包括资产配置、固定收益类品种、权益类品种策略；固定收益灵活运用期限结构、信用、互换、息差、期权策略；权益类含一级市场申购和二级市场股票投资。",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "benchmark",
+      "item_id": "benchmark",
+      "label": "业绩比较基准",
+      "target_value": "中债-投资级公司信用债精选财富（总值）指数收益率*30%+中证可转债及可交换债券50指数收益率*55%+沪深300指数收益率*10%+活期存款基准利率*5%",
+      "reference_value": "中国债券总指数收益率×90%+沪深300指数收益率×10%",
+      "expected_value": "中国债券总指数收益率×90%+沪深300指数收益率×10%",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "UNRESOLVED",
+      "period_applicability": "summary_compiled_2026-09-18; report_through_2026-06-30; change_effective_date_unconfirmed",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 5,
+        "quote": "业绩比较基准 中国债券总指数收益率×90%+沪深300指数收益率×10%",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 2,
+          "quote": "业绩比较基准 中债-投资级公司信用债精选财富（总值）指数收益率*30%+中证可转债及可交换债券50指数收益率*55%+沪深300指数收益率*10%+活期存款基准利率*5%",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "两份原文基准组成确实不同；目标在中报报告期后编制，所给PDF未找到明确变更生效日。即使补充招书列新基准，也不能据此确认2026-09-18已适用或覆盖主来源差异，应保留时点复核。",
+      "expected_selected_reference_role": null
+    },
+    {
+      "key": "risk_return",
+      "item_id": "risk_return",
+      "label": "风险收益特征",
+      "target_value": "本基金属于证券市场中的中低风险品种，预期收益和风险高于货币市场基金、普通债券型基金，低于股票型基金。",
+      "reference_value": "本基金属于证券市场中的中低风险品种，预期收益和风险高于货币市场基金、普通债券型基金，低于股票型基金。",
+      "expected_value": "本基金属于证券市场中的中低风险品种，预期收益和风险高于货币市场基金、普通债券型基金，低于股票型基金。",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 6,
+        "quote": "本基金属于证券市场中的中低风险品种，预期收益和风险高于货币市场基金、普通债券型基金，低于股票型基金。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 2,
+          "quote": "本基金属于证券市场中的中低风险品种，预期收益和风险高于货币市场基金、普通债券型基金，低于股票型基金。",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "management_fee",
+      "item_id": "management_fee",
+      "label": "管理费率",
+      "target_value": "0.70%/年",
+      "reference_value": "0.70%/年",
+      "expected_value": "0.70%/年",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "same_contract_annual_rate",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 35,
+        "quote": "支付基金管理人的管理人报酬按前一日基金资产净值0.70%的年费率计提",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 3,
+          "quote": "管理费 固定比例0.70%",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "主要中报已披露年费率，继续使用主要来源，不能因上传招书而改源。",
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "custody_fee",
+      "item_id": "custody_fee",
+      "label": "托管费率",
+      "target_value": "0.20%/年",
+      "reference_value": "0.20%/年",
+      "expected_value": "0.20%/年",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "same_contract_annual_rate",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 35,
+        "quote": "支付基金托管人的托管费按前一日基金资产净值0.20%的年费率计提",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 3,
+          "quote": "托管费 固定比例0.20%",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "主要中报已披露年费率，继续使用主要来源，不能因上传招书而改源。",
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "audit_fee",
+      "item_id": "audit_fee",
+      "label": "审计费用",
+      "target_value": "80,000.00元/年（预估值）",
+      "reference_value": "39,671.58元（2026-01-01至2026-06-30实际发生额）",
+      "expected_value": "39,671.58元（2026-01-01至2026-06-30实际发生额）",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "NOT_CHECKED",
+      "period_applicability": "target_annual_estimate_vs_reference_half_year_actual",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 32,
+        "quote": "6.4.6.18其他费用；期间2026年1月1日至2026年6月30日；审计费用39,671.58",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 4,
+          "quote": "审计费用80,000.00；注2：年金额为预估值，最终实际金额以基金定期报告披露为准。",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "年度预估与半年度实际发生额的期间/费用性质不同，不能直接判一致或差异；配置的补充招书也没有相同年度预估金额。",
+      "expected_selected_reference_role": null
+    },
+    {
+      "key": "disclosure_fee",
+      "item_id": "disclosure_fee",
+      "label": "信息披露费",
+      "target_value": "120,000.00元/年（预估值）",
+      "reference_value": "59,507.37元（2026-01-01至2026-06-30实际发生额）",
+      "expected_value": "59,507.37元（2026-01-01至2026-06-30实际发生额）",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "NOT_CHECKED",
+      "period_applicability": "target_annual_estimate_vs_reference_half_year_actual",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/博时信用债券投资基金/2026-08-31_2026年中期报告.pdf",
+        "pdf_page": 32,
+        "quote": "6.4.6.18其他费用；期间2026年1月1日至2026年6月30日；信息披露费59,507.37",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/博时信用债券投资基金/2026-09-21_产品资料概要更新_AB份额.pdf",
+          "pdf_page": 4,
+          "quote": "信息披露费120,000.00；注2：年金额为预估值，最终实际金额以基金定期报告披露为准。",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "年度预估与半年度实际发生额的期间/费用性质不同，不能直接判一致或差异；配置的补充招书也没有相同年度预估金额。",
+      "expected_selected_reference_role": null
+    }
+  ],
+  "review_note": "独立读取目标概要PDF1-5页和2026中期报告基本情况、经理及费用注释，关键目标字段已目视核对表格渲染；补充情景另查招书PDF104、125-126页。目标编制日2026-09-18，主要报告期2026-01-01至2026-06-30、送出日2026-08-31；补充招书披露日2026-09-21晚于编制日，不能单凭现行文字推定编制日已生效。代码角色、基准生效时点和年度预估金额保留未确认。",
+  "verification": {
+    "method": "独立PDF原文与关键页面渲染核验；未使用模型任务输出作为真值",
+    "input_hashes": [
+      {
+        "role": "target",
+        "sha256": "c393b01622c5bc64293629604c5a9a0d367ac8820000cb4f1f21b9060c26bb6c",
+        "matches_manifest": true
+      },
+      {
+        "role": "primary_reference",
+        "sha256": "388ebfbdae6e8a02767aa81f2e15ebb558962b7095f90ec5387f0d5f53b2511c",
+        "matches_manifest": true
+      }
+    ],
+    "confirmed_count": 11,
+    "unconfirmed_items": [
+      "fund_code",
+      "benchmark",
+      "audit_fee",
+      "disclosure_fee"
+    ],
+    "not_applicable_items": [
+      "exchange_names"
+    ]
+  }
+}

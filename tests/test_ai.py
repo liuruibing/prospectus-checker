@@ -58,6 +58,7 @@ def test_make_provider_selects_omp_from_environment(monkeypatch):
 
 def test_langchain_limits_parallel_requests_and_records_per_request_metrics(monkeypatch):
     monkeypatch.setenv("PROSPECTUS_MODEL_CONCURRENCY", "2")
+    monkeypatch.setenv("LLM_REQUEST_INTERVAL_SECONDS", "0")
     provider = ai.LangChainProvider()
     active, peak = 0, 0
 

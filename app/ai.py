@@ -28,13 +28,18 @@ class LangChainProvider:
         self.base_url = os.getenv("LLM_BASE_URL", "").strip().rstrip("/")
         self.api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
         self.model_name = os.getenv("LLM_MODEL", "").strip()
+        self.reasoning_effort = os.getenv("LLM_REASONING_EFFORT", "").strip() or None
         self.timeout = float(os.getenv("PROSPECTUS_LLM_TIMEOUT_SECONDS", "360"))
         self._model = None
         self._slots = asyncio.Semaphore(max(1, int(os.getenv("PROSPECTUS_MODEL_CONCURRENCY", "3"))))
+        self._start_lock = asyncio.Lock()
+        self._last_start = 0.0
+        self.request_interval = max(0.0, float(os.getenv("LLM_REQUEST_INTERVAL_SECONDS", "0")))
 
     @property
     def cache_namespace(self) -> dict[str, Any]:
-        return {"provider": type(self).__name__, "url": self.base_url, "model": self.model_name, "temperature": 0}
+        return {"provider": type(self).__name__, "url": self.base_url, "model": self.model_name,
+                "temperature": 0, "reasoning_effort": self.reasoning_effort}
 
     def require_configured(self) -> None:
         missing = [
@@ -56,12 +61,18 @@ class LangChainProvider:
             temperature=0,
             timeout=self.timeout,
             max_retries=int(os.getenv("LLM_NETWORK_RETRIES", "1")),
+            **({"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}),
         )
         return self._model
 
     async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
         queued = time.monotonic()
         async with self._slots:
+            async with self._start_lock:
+                delay = self.request_interval - (time.monotonic() - self._last_start)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                self._last_start = time.monotonic()
             started = time.monotonic()
             response = await asyncio.wait_for(self.build_model().ainvoke([
                 ("system", system_prompt),

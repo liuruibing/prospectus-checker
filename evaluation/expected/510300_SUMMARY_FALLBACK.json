@@ -1,0 +1,566 @@
+{
+  "case_id": "510300_SUMMARY_FALLBACK",
+  "status": "READY_WITH_UNCONFIRMED_ITEMS",
+  "documents": [
+    {
+      "role": "target",
+      "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+      "sha256": "c00ceaf200a405a0e15459deff9d2ef5e1f12e8e0c88ba492169ca5f08f7b676",
+      "official_instance_id": "1392214"
+    },
+    {
+      "role": "primary_reference",
+      "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+      "sha256": "26bfd30e3484a58f4ba2a0945ec49039b1cc2c01fa2433f66eb53e1ae1f1ecd8",
+      "official_instance_id": "1379244"
+    },
+    {
+      "role": "fallback_reference",
+      "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+      "sha256": "187c5b55642435732d4d1a09802d5434bc547b5569763ca9207102bd60caa60d",
+      "official_instance_id": "1392237"
+    }
+  ],
+  "items": [
+    {
+      "key": "fund_short_name",
+      "item_id": "fund_short_name",
+      "label": "基金简称",
+      "target_value": "华泰柏瑞沪深300ETF",
+      "reference_value": "华泰柏瑞沪深300ETF",
+      "expected_value": "华泰柏瑞沪深300ETF",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "基金简称 华泰柏瑞沪深300ETF",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "基金简称 华泰柏瑞沪深300ETF",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "fund_code",
+      "item_id": "fund_code",
+      "label": "基金代码",
+      "target_value": "510300",
+      "reference_value": "510300",
+      "expected_value": "510300",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "same_fund_identity_and_share_scope",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "基金主代码 510300",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "基金代码 510300",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "manager",
+      "item_id": "manager",
+      "label": "基金管理人",
+      "target_value": "华泰柏瑞基金管理有限公司",
+      "reference_value": "华泰柏瑞基金管理有限公司",
+      "expected_value": "华泰柏瑞基金管理有限公司",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "基金管理人 华泰柏瑞基金管理有限公司",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "基金管理人 华泰柏瑞基金管理有限公司",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "custodian",
+      "item_id": "custodian",
+      "label": "基金托管人",
+      "target_value": "中国工商银行股份有限公司",
+      "reference_value": "中国工商银行股份有限公司",
+      "expected_value": "中国工商银行股份有限公司",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "基金托管人 中国工商银行股份有限公司",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "基金托管人 中国工商银行股份有限公司",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "contract_start_date",
+      "item_id": "contract_start_date",
+      "label": "基金合同生效日",
+      "target_value": "2012-05-04",
+      "reference_value": "2012-05-04",
+      "expected_value": "2012-05-04",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "基金合同生效日 2012年5月4日",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "基金合同生效日 2012年5月4日",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "fund_managers",
+      "item_id": "fund_managers",
+      "label": "基金经理",
+      "target_value": "柳军",
+      "reference_value": "柳军",
+      "expected_value": "柳军",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "same_named_manager",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 4,
+        "quote": "4.1基金经理简介：柳军；职务为本基金的基金经理",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "基金经理 柳军",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "manager_start_dates",
+      "item_id": "manager_start_dates",
+      "label": "开始担任本基金经理的日期",
+      "target_value": "柳军：2012-05-04",
+      "reference_value": "柳军：2012-05-04",
+      "expected_value": "柳军：2012-05-04",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "date_bound_to_named_manager",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 4,
+        "quote": "柳军；任本基金的基金经理期限：任职日期2012年5月4日，离任日期-；简历续至PDF第6页",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "柳军；开始担任本基金基金经理的日期 2012年05月04日",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "exchange_names",
+      "item_id": "exchange_names",
+      "label": "场内简称与扩位证券简称",
+      "target_value": null,
+      "reference_value": "场内简称300ETF；扩位证券简称沪深300ETF",
+      "expected_value": "场内简称300ETF；扩位证券简称沪深300ETF",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "NOT_CHECKED",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "场内简称 300ETF(扩位证券简称：沪深300ETF)",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "产品概况表未列“场内简称”或“扩位证券简称”字段，基金简称列为华泰柏瑞沪深300ETF",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "主要来源明确披露两个交易简称，但概要没有对应标签/值；不能用基金简称或文档标题替代目标字段。",
+      "expected_selected_reference_role": null
+    },
+    {
+      "key": "investment_objective",
+      "item_id": "investment_objective",
+      "label": "投资目标",
+      "target_value": "紧密跟踪标的指数表现，追求跟踪偏离度和跟踪误差的最小化。本基金力争将日均跟踪偏离度控制在0.2%以内，年化跟踪误差控制在2%以内。",
+      "reference_value": "紧密跟踪标的指数表现，追求跟踪偏离度和跟踪误差的最小化。",
+      "expected_value": "紧密跟踪标的指数表现，追求跟踪偏离度和跟踪误差的最小化。",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "UNRESOLVED",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "投资目标 紧密跟踪标的指数表现，追求跟踪偏离度和跟踪误差的最小化。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "紧密跟踪标的指数表现，追求跟踪偏离度和跟踪误差的最小化。本基金力争将日均跟踪偏离度控制在0.2%以内，年化跟踪误差控制在2%以内。",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [
+        {
+          "role": "fallback_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+          "pdf_page": 53,
+          "quote": "投资目标：日均跟踪偏离度控制在0.2%以内，年化跟踪误差控制在2%以内。",
+          "kind": "SUPPLEMENT_CONTEXT_ONLY"
+        }
+      ],
+      "reason": "共享目标语义一致；概要附加0.2%和2%两项限制，指定季度报告未披露。不得判为内容冲突，也不能把附加数值算作已由主要来源验证。当前规则未允许本指标切换补充来源。",
+      "expected_selected_reference_role": null
+    },
+    {
+      "key": "investment_strategy",
+      "item_id": "investment_strategy",
+      "label": "主要投资策略",
+      "target_value": "本基金主要采取完全复制法，即完全按照标的指数的成份股组成及其权重构建基金股票投资组合，并根据标的指数成份股及其权重的变动进行相应调整。但在因特殊情况（如流动性不足）导致无法获得足够数量的股票时，基金管理人将运用其他合理的投资方法构建本基金的实际投资组合，追求尽可能贴近目标指数的表现。",
+      "reference_value": "本基金主要采取完全复制法，即完全按照标的指数的成份股组成及其权重构建基金股票投资组合，并根据标的指数成份股及其权重的变动进行相应调整。但在因特殊情况（如流动性不足）导致无法获得足够数量的股票时，基金管理人将运用其他合理的投资方法构建本基金的实际投资组合，追求尽可能贴近目标指数的表现。",
+      "expected_value": "本基金主要采取完全复制法，即完全按照标的指数的成份股组成及其权重构建基金股票投资组合，并根据标的指数成份股及其权重的变动进行相应调整。但在因特殊情况（如流动性不足）导致无法获得足够数量的股票时，基金管理人将运用其他合理的投资方法构建本基金的实际投资组合，追求尽可能贴近目标指数的表现。",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "本基金主要采取完全复制法，即完全按照标的指数的成份股组成及其权重构建基金股票投资组合，并根据标的指数成份股及其权重的变动进行相应调整。但在因特殊情况（如流动性不足）导致无法获得足够数量的股票时，基金管理人将运用其他合理的投资方法构建本基金的实际投资组合，追求尽可能贴近目标指数的表现。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 1,
+          "quote": "本基金主要采取完全复制法，即完全按照标的指数的成份股组成及其权重构建基金股票投资组合，并根据标的指数成份股及其权重的变动进行相应调整。但在因特殊情况（如流动性不足）导致无法获得足够数量的股票时，基金管理人将运用其他合理的投资方法构建本基金的实际投资组合，追求尽可能贴近目标指数的表现。 1、决策依据 2、投资管理体制 3、投资程序 4、参与转融通证券出借业务策略 5、存托凭证投资策略",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "reason": "主要复制方法、权重调整及特殊情况替代方法一致；概要额外列示策略子标题，不能据此制造策略冲突。",
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "benchmark",
+      "item_id": "benchmark",
+      "label": "业绩比较基准",
+      "target_value": "沪深300指数",
+      "reference_value": "沪深300指数",
+      "expected_value": "沪深300指数",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "业绩比较基准 沪深300指数",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 2,
+          "quote": "业绩比较基准 沪深300指数",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "risk_return",
+      "item_id": "risk_return",
+      "label": "风险收益特征",
+      "target_value": "本基金属于股票型基金中的指数型基金，股票最低仓位为95%，并采用完全复制的被动式投资策略；相对于混合基金、债券基金与货币市场基金风险和收益较高，属于股票型基金中高风险、高收益的产品；相对于采用抽样复制的指数型基金，其风险和收益特征更能与标的指数保持基本一致。",
+      "reference_value": "本基金属于股票型基金中的指数型基金，股票最低仓位为95%，并采用完全复制的被动式投资策略；相对于混合基金、债券基金与货币市场基金风险和收益较高，属于股票型基金中高风险、高收益的产品；相对于采用抽样复制的指数型基金，其风险和收益特征更能与标的指数保持基本一致。",
+      "expected_value": "本基金属于股票型基金中的指数型基金，股票最低仓位为95%，并采用完全复制的被动式投资策略；相对于混合基金、债券基金与货币市场基金风险和收益较高，属于股票型基金中高风险、高收益的产品；相对于采用抽样复制的指数型基金，其风险和收益特征更能与标的指数保持基本一致。",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": 2,
+        "quote": "本基金属于股票型基金中的指数型基金，股票最低仓位为95%，并采用完全复制的被动式投资策略；相对于混合基金、债券基金与货币市场基金风险和收益较高，属于股票型基金中高风险、高收益的产品；相对于采用抽样复制的指数型基金，其风险和收益特征更能与标的指数保持基本一致。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 2,
+          "quote": "本基金属于股票型基金中的指数型基金，股票最低仓位为95%，并采用完全复制的被动式投资策略；相对于混合基金、债券基金与货币市场基金风险和收益较高，属于股票型基金中高风险、高收益的产品；相对于采用抽样复制的指数型基金，其风险和收益特征更能与标的指数保持基本一致。",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [],
+      "expected_selected_reference_role": "periodic_report"
+    },
+    {
+      "key": "management_fee",
+      "item_id": "management_fee",
+      "label": "管理费率",
+      "target_value": "0.15%/年",
+      "reference_value": "0.15%/年",
+      "expected_value": "0.15%/年",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "UNRESOLVED",
+      "period_applicability": "same_contract_annual_rate_at_2025-11-24",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": "1-14",
+        "quote": "逐页核验季度报告PDF1-14页：没有披露基金管理费或托管费的年费率，也未列示审计费用和信息披露费用年度金额；PDF第2页说明财务资料未经审计。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 3,
+          "quote": "管理费 0.15%",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [
+        {
+          "role": "fallback_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+          "pdf_page": 75,
+          "quote": "本基金的管理费按前一日基金资产净值的0.15%年费率计提。",
+          "kind": "SUPPLEMENT"
+        }
+      ],
+      "reason": "费率文本与概要一致，但招募说明书和概要编制日同为2025-11-24，缺少日内时间或此前生效版本证据，不能确认费率在编制时点已适用。",
+      "expected_selected_reference_role": "prospectus"
+    },
+    {
+      "key": "custody_fee",
+      "item_id": "custody_fee",
+      "label": "托管费率",
+      "target_value": "0.05%/年",
+      "reference_value": "0.05%/年",
+      "expected_value": "0.05%/年",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "UNRESOLVED",
+      "period_applicability": "same_contract_annual_rate_at_2025-11-24",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": "1-14",
+        "quote": "逐页核验季度报告PDF1-14页：没有披露基金管理费或托管费的年费率，也未列示审计费用和信息披露费用年度金额；PDF第2页说明财务资料未经审计。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 3,
+          "quote": "托管费 0.05%",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [
+        {
+          "role": "fallback_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+          "pdf_page": 75,
+          "quote": "本基金的托管费按前一日基金资产净值的0.05%的年费率计提。",
+          "kind": "SUPPLEMENT"
+        }
+      ],
+      "reason": "费率文本与概要一致，但招募说明书和概要编制日同为2025-11-24，缺少日内时间或此前生效版本证据，不能确认费率在编制时点已适用。",
+      "expected_selected_reference_role": "prospectus"
+    },
+    {
+      "key": "audit_fee",
+      "item_id": "audit_fee",
+      "label": "审计费用",
+      "target_value": "150,000.00元/年（预估值）",
+      "reference_value": "150,000.00元/年（预估值）",
+      "expected_value": "150,000.00元/年（预估值）",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "NOT_CHECKED",
+      "period_applicability": "annual_estimate_at_compilation; estimate_year_not_explicit",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": "1-14",
+        "quote": "逐页核验季度报告PDF1-14页：没有披露基金管理费或托管费的年费率，也未列示审计费用和信息披露费用年度金额；PDF第2页说明财务资料未经审计。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 3,
+          "quote": "审计费用 150,000.00元；注2：年金额为预估值，最终实际金额以基金定期报告披露为准。",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [
+        {
+          "role": "fallback_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+          "pdf_page": 75,
+          "quote": "基金费用种类列《基金合同》生效后与基金相关的信息披露费用及会计师费等；未列年度金额。",
+          "kind": "SUPPLEMENT"
+        }
+      ],
+      "reason": "概要标注年度预估值，季度报告未披露对应年金额；招募说明书如已提供也只有费用种类和实际列支原则，不能独立证实该预估数值。",
+      "expected_selected_reference_role": null
+    },
+    {
+      "key": "disclosure_fee",
+      "item_id": "disclosure_fee",
+      "label": "信息披露费",
+      "target_value": "120,000.00元/年（预估值）",
+      "reference_value": "120,000.00元/年（预估值）",
+      "expected_value": "120,000.00元/年（预估值）",
+      "status": "EXPECTED_UNCONFIRMED",
+      "expected_comparison_status": "NOT_CHECKED",
+      "period_applicability": "annual_estimate_at_compilation; estimate_year_not_explicit",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+        "pdf_page": "1-14",
+        "quote": "逐页核验季度报告PDF1-14页：没有披露基金管理费或托管费的年费率，也未列示审计费用和信息披露费用年度金额；PDF第2页说明财务资料未经审计。",
+        "kind": "PRIMARY"
+      },
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_产品资料概要更新.pdf",
+          "pdf_page": 3,
+          "quote": "信息披露费 120,000.00元；注2：年金额为预估值，最终实际金额以基金定期报告披露为准。",
+          "kind": "TARGET"
+        }
+      ],
+      "supplementary_evidence": [
+        {
+          "role": "fallback_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+          "pdf_page": 75,
+          "quote": "基金费用种类列《基金合同》生效后与基金相关的信息披露费用及会计师费等；未列年度金额。",
+          "kind": "SUPPLEMENT"
+        }
+      ],
+      "reason": "概要标注年度预估值，季度报告未披露对应年金额；招募说明书如已提供也只有费用种类和实际列支原则，不能独立证实该预估数值。",
+      "expected_selected_reference_role": null
+    }
+  ],
+  "review_note": "独立读取目标概要PDF1-4页与季度报告PDF1-14页，并核对目标经理/日期与费用表渲染；补充情景另核对招书PDF53及75页。目标概要编制日2025-11-24，主要报告期2025-07-01至2025-09-30、送出日2025-10-28。未披露的目标交易简称、投资目标附加限制、年度预估金额不推定为差异或已验证。 同日版招募说明书费率仅确认文本一致，未确认其先于概要编制并已生效，故预期状态修订为 EXPECTED_UNCONFIRMED。",
+  "verification": {
+    "method": "独立PDF原文与关键页面渲染核验；未使用模型任务输出作为真值",
+    "input_hashes": [
+      {
+        "role": "target",
+        "sha256": "c00ceaf200a405a0e15459deff9d2ef5e1f12e8e0c88ba492169ca5f08f7b676",
+        "matches_manifest": true
+      },
+      {
+        "role": "primary_reference",
+        "sha256": "26bfd30e3484a58f4ba2a0945ec49039b1cc2c01fa2433f66eb53e1ae1f1ecd8",
+        "matches_manifest": true
+      },
+      {
+        "role": "fallback_reference",
+        "sha256": "187c5b55642435732d4d1a09802d5434bc547b5569763ca9207102bd60caa60d",
+        "matches_manifest": true
+      }
+    ],
+    "confirmed_count": 12,
+    "unconfirmed_items": [
+      "exchange_names",
+      "investment_objective",
+      "audit_fee",
+      "disclosure_fee"
+    ],
+    "not_applicable_items": []
+  }
+}

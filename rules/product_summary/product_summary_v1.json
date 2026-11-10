@@ -1,0 +1,22 @@
+{
+  "version": "product-summary-v1",
+  "origin": "产品资料概要校验规则.xlsx / Sheet1 / rows 2-17",
+  "items": [
+    {"excel_row": 1, "excel_source_cell": "Sheet1!A2:B2", "key": "fund_short_name", "label": "基金简称", "roles": ["periodic_report"], "terms": ["基金简称", "基金产品概况"]},
+    {"excel_row": 2, "excel_source_cell": "Sheet1!A3:B3", "key": "fund_code", "label": "基金代码", "roles": ["periodic_report"], "terms": ["基金主代码", "基金代码"]},
+    {"excel_row": 3, "excel_source_cell": "Sheet1!A4:B4", "key": "manager", "label": "基金管理人", "roles": ["prospectus", "periodic_report"], "terms": ["基金管理人", "管理人基本情况"]},
+    {"excel_row": 4, "excel_source_cell": "Sheet1!A5:B5", "key": "custodian", "label": "基金托管人", "roles": ["prospectus", "periodic_report"], "terms": ["基金托管人", "托管人概况"]},
+    {"excel_row": 5, "excel_source_cell": "Sheet1!A6:B6", "key": "contract_start_date", "label": "基金合同生效日", "roles": ["periodic_report"], "terms": ["基金合同生效日"]},
+    {"excel_row": 6, "excel_source_cell": "Sheet1!A7:B7", "key": "fund_managers", "label": "基金经理", "roles": ["periodic_report"], "terms": ["基金经理", "基金经理简介"]},
+    {"excel_row": 7, "excel_source_cell": "Sheet1!A8:B8", "key": "manager_start_dates", "label": "开始担任本基金经理的日期", "roles": ["periodic_report"], "terms": ["开始担任本基金", "基金经理的日期", "任职日期"]},
+    {"excel_row": 8, "excel_source_cell": "Sheet1!A9:B9", "key": "exchange_names", "label": "场内简称与扩位证券简称", "roles": ["periodic_report"], "terms": ["场内简称", "扩位证券简称"]},
+    {"excel_row": 9, "excel_source_cell": "Sheet1!A10:B10", "key": "investment_objective", "label": "投资目标", "roles": ["periodic_report"], "terms": ["投资目标"]},
+    {"excel_row": 10, "excel_source_cell": "Sheet1!A11:B11", "key": "investment_strategy", "label": "主要投资策略", "roles": ["periodic_report"], "terms": ["投资策略", "主要投资策略"]},
+    {"excel_row": 11, "excel_source_cell": "Sheet1!A12:B12", "key": "benchmark", "label": "业绩比较基准", "roles": ["periodic_report"], "terms": ["业绩比较基准"]},
+    {"excel_row": 12, "excel_source_cell": "Sheet1!A13:B13", "key": "risk_return", "label": "风险收益特征", "roles": ["periodic_report"], "terms": ["风险收益特征"]},
+    {"excel_row": 13, "excel_source_cell": "Sheet1!A14:B14", "key": "management_fee", "label": "管理费率", "roles": ["prospectus"], "terms": ["管理费", "管理费率"], "note": "核对基金运作相关费用，Excel 的费用分类标注与样本原文不同"},
+    {"excel_row": 14, "excel_source_cell": "Sheet1!A15:B15", "key": "custody_fee", "label": "托管费率", "roles": ["prospectus"], "terms": ["托管费", "托管费率"], "note": "核对基金运作相关费用，Excel 的费用分类标注与样本原文不同"},
+    {"excel_row": 15, "excel_source_cell": "Sheet1!A16:B16", "key": "audit_fee", "label": "审计费用", "roles": ["annual_report"], "terms": ["7.4.7.18", "其他费用", "审计费用"], "amount_period": "current_period"},
+    {"excel_row": 16, "excel_source_cell": "Sheet1!A17:B17", "key": "disclosure_fee", "label": "信息披露费", "roles": ["annual_report"], "terms": ["7.4.7.18", "其他费用", "信息披露费"], "amount_period": "current_period"}
+  ]
+}

@@ -47,7 +47,7 @@ def normalize_numeric(raw: Any, *, percent: bool = False) -> dict[str, Any]:
         return {"kind": "DASH", "value": None}
     if not text:
         return {"kind": "EMPTY", "value": None}
-    numeric = text.replace(",", "").replace("，", "").replace(" ", "")
+    numeric = re.sub(r"\s+", "", text.replace(",", "").replace("，", ""))
     if numeric.endswith("%"):
         numeric = numeric[:-1]
     if numeric.startswith("(") and numeric.endswith(")"):

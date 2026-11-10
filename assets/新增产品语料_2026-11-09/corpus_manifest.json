@@ -1,0 +1,47 @@
+{
+  "downloaded_at": "2026-11-09T16:25:08+08:00",
+  "source_portal": "http://eid.csrc.gov.cn/fund/disclose/index.html",
+  "selection": "five_new_products_excluding_existing_corpus",
+  "excluded_existing_fund_codes": [
+    "000001",
+    "000198",
+    "050011",
+    "510300",
+    "513100"
+  ],
+  "product_count": 5,
+  "pdf_count": 30,
+  "products": [
+    {
+      "fund_code": "510500",
+      "name": "中证500交易型开放式指数证券投资基金",
+      "directory": "中证500交易型开放式指数证券投资基金（南方）",
+      "pdf_count": 6
+    },
+    {
+      "fund_code": "003095",
+      "name": "中欧医疗健康混合型证券投资基金",
+      "directory": "中欧医疗健康混合型证券投资基金",
+      "pdf_count": 6
+    },
+    {
+      "fund_code": "161005",
+      "name": "富国天惠精选成长混合型证券投资基金(LOF)",
+      "directory": "富国天惠精选成长混合型证券投资基金(LOF)",
+      "pdf_count": 6
+    },
+    {
+      "fund_code": "217022",
+      "name": "招商产业债券型证券投资基金",
+      "directory": "招商产业债券型证券投资基金",
+      "pdf_count": 6
+    },
+    {
+      "fund_code": "518880",
+      "name": "华安易富黄金交易型开放式证券投资基金",
+      "directory": "华安易富黄金交易型开放式证券投资基金",
+      "pdf_count": 6
+    }
+  ],
+  "errors": []
+}

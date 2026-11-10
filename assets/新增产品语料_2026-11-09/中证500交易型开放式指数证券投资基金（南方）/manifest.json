@@ -1,0 +1,141 @@
+{
+  "fund_code": "510500",
+  "name": "中证500交易型开放式指数证券投资基金",
+  "directory": "中证500交易型开放式指数证券投资基金（南方）",
+  "source_index_url": "http://eid.csrc.gov.cn/fund/disclose/fund_detail.do?fundId=3317",
+  "summary_publication_date": "2026-07-29",
+  "documents": [
+    {
+      "file": "2026-07-29_招募说明书更新.pdf",
+      "relative_path": "中证500交易型开放式指数证券投资基金（南方）/2026-07-29_招募说明书更新.pdf",
+      "role": "prospectus",
+      "publication_date": "2026-07-29",
+      "official_title": "南方中证500ETF ：2026招募说明书更新 2026-07-29",
+      "official_instance_id": "1545576",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1545576",
+      "downloaded_at": "2026-11-09T16:25:03+08:00",
+      "sha256": "2776141d5e54ab7f59d02402e82dcadf2495324719b366e5e8b06a5ca761ca14",
+      "bytes": 647675,
+      "pages": 123,
+      "extractable_text_chars": 110988,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE"
+    },
+    {
+      "file": "2026-07-29_产品资料概要更新.pdf",
+      "relative_path": "中证500交易型开放式指数证券投资基金（南方）/2026-07-29_产品资料概要更新.pdf",
+      "role": "product_summary",
+      "publication_date": "2026-07-29",
+      "official_title": "南方中证500ETF ：2026基金产品资料概要更新 2026-07-29",
+      "official_instance_id": "1545577",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1545577",
+      "downloaded_at": "2026-11-09T16:25:02+08:00",
+      "sha256": "a39405092c280e5bde19a7d29eccc3faff6c871c4b3e290662383ec2cd119ca7",
+      "bytes": 240957,
+      "pages": 8,
+      "extractable_text_chars": 7717,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 1,
+          "quote": "况基金简称南方中证500ETF基金代码510500基金管理人南方基金管理股份有限"
+        }
+      ]
+    },
+    {
+      "file": "2026-07-21_2026年第2季度报告.pdf",
+      "relative_path": "中证500交易型开放式指数证券投资基金（南方）/2026-07-21_2026年第2季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2026-07-21",
+      "official_title": "南方中证500ETF ：2026第二季度报告 2026-07-21",
+      "official_instance_id": "1539174",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1539174",
+      "downloaded_at": "2026-11-09T16:25:03+08:00",
+      "sha256": "7c4be425906d2db23cfc457245dfa422ce112e3ec3ceb5849bfda49d93cbb2b0",
+      "bytes": 261976,
+      "pages": 14,
+      "extractable_text_chars": 10328,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 2,
+          "quote": "0ETF;中证500ETF南方基金主代码510500交易代码510500基金运作方"
+        }
+      ]
+    },
+    {
+      "file": "2026-04-22_2026年第1季度报告.pdf",
+      "relative_path": "中证500交易型开放式指数证券投资基金（南方）/2026-04-22_2026年第1季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2026-04-22",
+      "official_title": "南方中证500ETF ：2026第一季度报告 2026-04-22",
+      "official_instance_id": "1482198",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1482198",
+      "downloaded_at": "2026-11-09T16:25:03+08:00",
+      "sha256": "499d8a416b5a00051f5e290f9ecaf8765043c0f45cc6c3d3a8e9ce87dfed7b6a",
+      "bytes": 254752,
+      "pages": 13,
+      "extractable_text_chars": 9663,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 2,
+          "quote": "0ETF;中证500ETF南方基金主代码510500交易代码510500基金运作方"
+        }
+      ]
+    },
+    {
+      "file": "2026-03-31_2025年年度报告.pdf",
+      "relative_path": "中证500交易型开放式指数证券投资基金（南方）/2026-03-31_2025年年度报告.pdf",
+      "role": "annual",
+      "publication_date": "2026-03-31",
+      "official_title": "南方中证500ETF ：2025年度报告 2026-03-31",
+      "official_instance_id": "1462183",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1462183",
+      "downloaded_at": "2026-11-09T16:25:04+08:00",
+      "sha256": "a4decd4a8abb3637a242d01f91dc27616223fed6d2711ee9278d3a79344307e7",
+      "bytes": 715896,
+      "pages": 95,
+      "extractable_text_chars": 99374,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 5,
+          "quote": "0ETF;中证500ETF南方基金主代码510500交易代码510500基金运作方"
+        }
+      ]
+    },
+    {
+      "file": "2025-08-30_2025年中期报告.pdf",
+      "relative_path": "中证500交易型开放式指数证券投资基金（南方）/2025-08-30_2025年中期报告.pdf",
+      "role": "interim",
+      "publication_date": "2025-08-30",
+      "official_title": "南方中证500ETF ：2025中期报告 2025-08-30",
+      "official_instance_id": "1351756",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1351756",
+      "downloaded_at": "2026-11-09T16:25:03+08:00",
+      "sha256": "6a7000944852633b2bffa46c24659e79eaa3fe344631e082029f3ae6f21c3f4f",
+      "bytes": 579064,
+      "pages": 62,
+      "extractable_text_chars": 74284,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 5,
+          "quote": "500ETF;中证500ETF基金主代码510500交易代码510500基金运作方"
+        }
+      ]
+    }
+  ]
+}

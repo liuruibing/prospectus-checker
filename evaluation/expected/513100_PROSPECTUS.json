@@ -1,0 +1,20 @@
+{
+  "case_id": "513100_PROSPECTUS",
+  "status": "PENDING_INDEPENDENT_PDF_REVIEW",
+  "documents": [
+    {
+      "role": "target",
+      "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_招募说明书更新_2026年第一号.pdf",
+      "sha256": "d2bcc6389dec8400b29bd3245c2cbe6a393b60c620cbe97f036767c7a938b507",
+      "official_instance_id": "1578626"
+    },
+    {
+      "role": "primary_reference",
+      "path": "assets/纳斯达克100交易型开放式指数证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+      "sha256": "783c9b7207fff7d0e4352c25210742b96bc14055502629509b55fb384d5b2a1e",
+      "official_instance_id": "1533701"
+    }
+  ],
+  "items": [],
+  "review_note": "尚未逐项对照原PDF建立独立预期，不得用于准确率验收。"
+}

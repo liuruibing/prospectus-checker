@@ -1,0 +1,82 @@
+{
+  "code": "000198",
+  "fund_id": "3414",
+  "name": "天弘余额宝货币市场基金",
+  "manager": "天弘基金",
+  "type": "货币市场基金",
+  "compiled": "2026-06-25",
+  "cutoff": "2025-06-30",
+  "note": "招书注明投资组合摘自2025年第2季度报告，此包使用同截止日2025年中期报告作核对依据，未收录原引用季报。概要任务使用编制日前的2026年第1季度报告，补充招书为当时已披露的2025-10-21版本。货币基金不适用股票行业/前十大股票模块，应按不适用处理。",
+  "source_index_url": "http://eid.csrc.gov.cn/fund/disclose/fund_detail.do?fundId=3414",
+  "downloaded_at": "2026-11-06T14:21:17+08:00",
+  "documents": [
+    {
+      "file": "2025-10-21_招募说明书更新.pdf",
+      "relative_path": "assets/天弘余额宝货币市场基金/2025-10-21_招募说明书更新.pdf",
+      "role": "prospectus",
+      "publication_date": "2025-10-21",
+      "official_instance_id": "1367273",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1367273",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "936e05c3466698fbe71badf61e9736e701c12336dd9b9110ee35909432d1b419",
+      "bytes": 1334253,
+      "pages": 124,
+      "extractable_text_chars": 89490
+    },
+    {
+      "file": "2026-06-26_产品资料概要更新.pdf",
+      "relative_path": "assets/天弘余额宝货币市场基金/2026-06-26_产品资料概要更新.pdf",
+      "role": "product_summary",
+      "publication_date": "2026-06-26",
+      "official_instance_id": "1511945",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1511945",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "a69b54f9b073ec9b18d822454a6d8ebae2568f84059775348da029dc3cfd35db",
+      "bytes": 355664,
+      "pages": 4,
+      "extractable_text_chars": 3131
+    },
+    {
+      "file": "2025-08-29_2025年中期报告.pdf",
+      "relative_path": "assets/天弘余额宝货币市场基金/2025-08-29_2025年中期报告.pdf",
+      "role": "prospectus_reference",
+      "publication_date": "2025-08-29",
+      "official_instance_id": "1340543",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1340543",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "cbb633baef68f3ca02be12d1620678d3eb536f4a13d3985fc9be26dbe94842d9",
+      "bytes": 1127716,
+      "pages": 47,
+      "extractable_text_chars": 44032
+    },
+    {
+      "file": "2026-04-22_2026年第1季度报告.pdf",
+      "relative_path": "assets/天弘余额宝货币市场基金/2026-04-22_2026年第1季度报告.pdf",
+      "role": "summary_reference",
+      "publication_date": "2026-04-22",
+      "official_instance_id": "1472474",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1472474",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "b95534071ff13e01138e47975f62c86e27cfd8d5edec2ca9bc8fd7b198aa497a",
+      "bytes": 657129,
+      "pages": 12,
+      "extractable_text_chars": 8540
+    },
+    {
+      "file": "2026-03-31_2025年年度报告.pdf",
+      "relative_path": "assets/天弘余额宝货币市场基金/2026-03-31_2025年年度报告.pdf",
+      "role": "annual_reference",
+      "publication_date": "2026-03-31",
+      "official_instance_id": "1455126",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1455126",
+      "downloaded_at": "2026-11-06T14:21:17+08:00",
+      "sha256": "20811c79441762920b0e8ffcc0766f4f0c1e53c47a9f4206dc62e1f781cf350c",
+      "bytes": 1265711,
+      "pages": 61,
+      "extractable_text_chars": 58402
+    }
+  ],
+  "validation_scope": "下载文件为有效PDF、可读取页数和文本，核对了封面类型/产品/日期及招书投资组合截止日；未运行AI核对，未声明所有指标一致。",
+  "fee_note": "年度报告仅供对应年度实际费用等指标核对；概要预估年费用不能直接视为与年报实际费用同口径。",
+  "version_note": "同批披露的概要编制日可能早于招书公告日，补充条款须核实生效日和适用版本，不能仅凭同批文件推定所有字段适用。"
+}

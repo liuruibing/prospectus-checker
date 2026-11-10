@@ -1,0 +1,141 @@
+{
+  "fund_code": "217022",
+  "name": "招商产业债券型证券投资基金",
+  "directory": "招商产业债券型证券投资基金",
+  "source_index_url": "http://eid.csrc.gov.cn/fund/disclose/fund_detail.do?fundId=3164",
+  "summary_publication_date": "2026-03-20",
+  "documents": [
+    {
+      "file": "2026-03-20_招募说明书更新.pdf",
+      "relative_path": "招商产业债券型证券投资基金/2026-03-20_招募说明书更新.pdf",
+      "role": "prospectus",
+      "publication_date": "2026-03-20",
+      "official_title": "招商产业债券 ：2026招募说明书更新 2026-03-20",
+      "official_instance_id": "1444929",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1444929",
+      "downloaded_at": "2026-11-09T16:25:06+08:00",
+      "sha256": "ec2495debe492f33a673d5e0b058554e9b65f78ecfd6d1cb6c1931fe71f84e7e",
+      "bytes": 698901,
+      "pages": 123,
+      "extractable_text_chars": 105660,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE"
+    },
+    {
+      "file": "2026-03-20_产品资料概要更新.pdf",
+      "relative_path": "招商产业债券型证券投资基金/2026-03-20_产品资料概要更新.pdf",
+      "role": "product_summary",
+      "publication_date": "2026-03-20",
+      "official_title": "招商产业债券 ：2026基金产品资料概要更新 2026-03-20",
+      "official_instance_id": "1444930",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1444930",
+      "downloaded_at": "2026-11-09T16:25:05+08:00",
+      "sha256": "e8f86031293657ed0dbe8a0b463763e15bbe8877abdac5cd2b1a76899b929f4c",
+      "bytes": 261825,
+      "pages": 5,
+      "extractable_text_chars": 3674,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 1,
+          "quote": "、产品概况基金简称招商产业债券基金代码217022下属基金简称招商产业债券C下属"
+        }
+      ]
+    },
+    {
+      "file": "2026-01-21_2025年第4季度报告.pdf",
+      "relative_path": "招商产业债券型证券投资基金/2026-01-21_2025年第4季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2026-01-21",
+      "official_title": "招商产业债券 ：2025第四季度报告 2026-01-21",
+      "official_instance_id": "1417060",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1417060",
+      "downloaded_at": "2026-11-09T16:25:06+08:00",
+      "sha256": "6bfa7322db12f1250cffccd34781648e3b071a4ea6c4cef0d5d6900f64d831a3",
+      "bytes": 339034,
+      "pages": 13,
+      "extractable_text_chars": 10143,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 2,
+          "quote": "金产品概况基金简称招商产业债券基金主代码217022交易代码217022基金运作方"
+        }
+      ]
+    },
+    {
+      "file": "2025-10-27_2025年第3季度报告.pdf",
+      "relative_path": "招商产业债券型证券投资基金/2025-10-27_2025年第3季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2025-10-27",
+      "official_title": "招商产业债券 ：2025第三季度报告 2025-10-27",
+      "official_instance_id": "1369891",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1369891",
+      "downloaded_at": "2026-11-09T16:25:06+08:00",
+      "sha256": "8a97cb6ad60efb43760d4e00734bdf22ff1395fc7c4e7491f82e4aa03e15606a",
+      "bytes": 333984,
+      "pages": 13,
+      "extractable_text_chars": 9886,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 2,
+          "quote": "金产品概况基金简称招商产业债券基金主代码217022交易代码217022基金运作方"
+        }
+      ]
+    },
+    {
+      "file": "2025-08-28_2025年中期报告.pdf",
+      "relative_path": "招商产业债券型证券投资基金/2025-08-28_2025年中期报告.pdf",
+      "role": "interim",
+      "publication_date": "2025-08-28",
+      "official_title": "招商产业债券 ：2025中期报告 2025-08-28",
+      "official_instance_id": "1338706",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1338706",
+      "downloaded_at": "2026-11-09T16:25:06+08:00",
+      "sha256": "93a06b02eb77ca7a4245ad1c620c07d58f5da6dd92380df408cb21a9b2142b55",
+      "bytes": 552072,
+      "pages": 50,
+      "extractable_text_chars": 50252,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 5,
+          "quote": "券投资基金基金简称招商产业债券基金主代码217022交易代码217022基金运作方"
+        }
+      ]
+    },
+    {
+      "file": "2025-03-28_2024年年度报告.pdf",
+      "relative_path": "招商产业债券型证券投资基金/2025-03-28_2024年年度报告.pdf",
+      "role": "annual",
+      "publication_date": "2025-03-28",
+      "official_title": "招商产业债券 ：2024年度报告 2025-03-28",
+      "official_instance_id": "1249049",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1249049",
+      "downloaded_at": "2026-11-09T16:25:06+08:00",
+      "sha256": "0d90d89fc4bdf2d36ada411c95c0a1f8870a27eefcbeda0da92b7340028315dc",
+      "bytes": 714747,
+      "pages": 62,
+      "extractable_text_chars": 64012,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 5,
+          "quote": "券投资基金基金简称招商产业债券基金主代码217022交易代码217022基金运作方"
+        }
+      ]
+    }
+  ]
+}

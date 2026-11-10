@@ -1,0 +1,141 @@
+{
+  "fund_code": "161005",
+  "name": "富国天惠精选成长混合型证券投资基金(LOF)",
+  "directory": "富国天惠精选成长混合型证券投资基金(LOF)",
+  "source_index_url": "http://eid.csrc.gov.cn/fund/disclose/fund_detail.do?fundId=163",
+  "summary_publication_date": "2026-06-16",
+  "documents": [
+    {
+      "file": "2026-06-16_招募说明书更新.pdf",
+      "relative_path": "富国天惠精选成长混合型证券投资基金(LOF)/2026-06-16_招募说明书更新.pdf",
+      "role": "prospectus",
+      "publication_date": "2026-06-16",
+      "official_title": "富国天惠成长混合(LOF) ：2026招募说明书更新 2026-06-16",
+      "official_instance_id": "1506511",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1506511",
+      "downloaded_at": "2026-11-09T16:25:05+08:00",
+      "sha256": "c0187539c8d7b177cc88146aa5a6fce47fc912839d6669edfba3bc9e10e246e5",
+      "bytes": 2536210,
+      "pages": 178,
+      "extractable_text_chars": 120082,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE"
+    },
+    {
+      "file": "2026-06-16_产品资料概要更新.pdf",
+      "relative_path": "富国天惠精选成长混合型证券投资基金(LOF)/2026-06-16_产品资料概要更新.pdf",
+      "role": "product_summary",
+      "publication_date": "2026-06-16",
+      "official_title": "富国天惠成长混合(LOF) ：2026基金产品资料概要更新 2026-06-16",
+      "official_instance_id": "1506500",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1506500",
+      "downloaded_at": "2026-11-09T16:25:04+08:00",
+      "sha256": "853b9337f1ff399c52a96566450ff0a86d96916e511cd90c9a68b1980599ef8d",
+      "bytes": 263684,
+      "pages": 4,
+      "extractable_text_chars": 3310,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 1,
+          "quote": "简称富国天惠成长混合(LOF)基金代码161005份额简称富国天惠成长混合(LO"
+        }
+      ]
+    },
+    {
+      "file": "2026-04-22_2026年第1季度报告.pdf",
+      "relative_path": "富国天惠精选成长混合型证券投资基金(LOF)/2026-04-22_2026年第1季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2026-04-22",
+      "official_title": "富国天惠成长混合(LOF) ：2026第一季度报告 2026-04-22",
+      "official_instance_id": "1481467",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1481467",
+      "downloaded_at": "2026-11-09T16:25:04+08:00",
+      "sha256": "1d8b46767c4d5a79a20a3e2e214cfac1e7c633a7bdcb9868d45b69a340ee5269",
+      "bytes": 474821,
+      "pages": 19,
+      "extractable_text_chars": 10103,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 3,
+          "quote": "LOF)场内简称富国天惠LOF基金主代码161005基金运作方式契约型开放式基金合"
+        }
+      ]
+    },
+    {
+      "file": "2026-03-31_2025年年度报告.pdf",
+      "relative_path": "富国天惠精选成长混合型证券投资基金(LOF)/2026-03-31_2025年年度报告.pdf",
+      "role": "annual",
+      "publication_date": "2026-03-31",
+      "official_title": "富国天惠成长混合(LOF) ：2025年度报告 2026-03-31",
+      "official_instance_id": "1461431",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1461431",
+      "downloaded_at": "2026-11-09T16:25:06+08:00",
+      "sha256": "1e3bc89c104534058021911933ba07ac06fc0d213e63fd6652f5ab7eed2e0ae3",
+      "bytes": 1856186,
+      "pages": 85,
+      "extractable_text_chars": 81419,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 6,
+          "quote": "简称富国天惠成长混合(LOF)基金主代码161005基金运作方式契约型开放式基金合"
+        }
+      ]
+    },
+    {
+      "file": "2026-01-22_2025年第4季度报告.pdf",
+      "relative_path": "富国天惠精选成长混合型证券投资基金(LOF)/2026-01-22_2025年第4季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2026-01-22",
+      "official_title": "富国天惠成长混合(LOF) ：2025第四季度报告 2026-01-22",
+      "official_instance_id": "1427119",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1427119",
+      "downloaded_at": "2026-11-09T16:25:04+08:00",
+      "sha256": "ea69a4b9a245fb33640f698ca64da7a048d110a2c356826609ea1c32b1cf29a6",
+      "bytes": 463189,
+      "pages": 19,
+      "extractable_text_chars": 10079,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 3,
+          "quote": "LOF)场内简称富国天惠LOF基金主代码161005基金运作方式契约型开放式基金合"
+        }
+      ]
+    },
+    {
+      "file": "2025-08-30_2025年中期报告.pdf",
+      "relative_path": "富国天惠精选成长混合型证券投资基金(LOF)/2025-08-30_2025年中期报告.pdf",
+      "role": "interim",
+      "publication_date": "2025-08-30",
+      "official_title": "富国天惠成长混合(LOF) ：2025中期报告 2025-08-30",
+      "official_instance_id": "1351129",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1351129",
+      "downloaded_at": "2026-11-09T16:25:06+08:00",
+      "sha256": "976ece7f0b356fde9c05e559cb5ef86436a040560b4788ad744f40fec4554efe",
+      "bytes": 1521533,
+      "pages": 73,
+      "extractable_text_chars": 65477,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 6,
+          "quote": "LOF)场内简称富国天惠LOF基金主代码161005基金运作方式契约型开放式基金合"
+        }
+      ]
+    }
+  ]
+}

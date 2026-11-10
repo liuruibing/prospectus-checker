@@ -1,0 +1,413 @@
+{
+  "case_id": "000001_SUMMARY_PRIMARY",
+  "status": "READY_WITH_UNCONFIRMED_ITEMS",
+  "documents": [
+    {
+      "role": "target",
+      "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+      "sha256": "42c9854eee3979b4d399e1886737412b1cf133bd2a55188174064c069130fd16",
+      "official_instance_id": "1541336"
+    },
+    {
+      "role": "primary_reference",
+      "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+      "sha256": "5d719abce68b6d2c412c7efe99dea43b5600f2ec63413148f8a708929684e13b",
+      "official_instance_id": "1534170"
+    }
+  ],
+  "items": [
+    {
+      "key": "fund_short_name",
+      "label": "基金简称",
+      "expected_value": "华夏成长混合",
+      "status": "CONFIRMED",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "基金简称：华夏成长混合",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 1,
+          "quote": "目标概要“基金简称”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "fund_code",
+      "label": "基金代码",
+      "expected_value": "基金主代码 000001；交易代码 000001（前端）、000002（后端）",
+      "status": "CONFIRMED",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "基金主代码 000001；交易代码 000001（前端）/000002（后端）",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 1,
+          "quote": "目标概要“基金代码”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ],
+      "reason": "目标概要同时列基金主代码、前端交易代码、后端交易代码和下属基金代码，需依据各自标签匹配；不将代码重复当成份额定义相同。"
+    },
+    {
+      "key": "manager",
+      "label": "基金管理人",
+      "expected_value": "华夏基金管理有限公司",
+      "status": "CONFIRMED",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "基金管理人 华夏基金管理有限公司",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 1,
+          "quote": "目标概要“基金管理人”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "custodian",
+      "label": "基金托管人",
+      "expected_value": "中国建设银行股份有限公司",
+      "status": "CONFIRMED",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "基金托管人 中国建设银行股份有限公司",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 1,
+          "quote": "目标概要“基金托管人”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "contract_start_date",
+      "label": "基金合同生效日",
+      "expected_value": "2001-12-18",
+      "status": "CONFIRMED",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "基金合同生效日 2001年12月18日",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 1,
+          "quote": "目标概要“基金合同生效日”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "fund_managers",
+      "label": "基金经理",
+      "expected_value": "郑晓辉；刘睿聪",
+      "status": "CONFIRMED",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 5,
+        "quote": "基金经理简介：郑晓辉、本基金的基金经理；PDF第6页续：刘睿聪、本基金的基金经理",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 1,
+          "quote": "目标概要“基金经理”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "manager_start_dates",
+      "label": "开始担任本基金经理的日期",
+      "expected_value": "郑晓辉 2024-12-26；刘睿聪 2024-12-26",
+      "status": "CONFIRMED",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 5,
+        "quote": "任职日期：郑晓辉2024-12-26；PDF第6页基金经理简介续表：刘睿聪2024-12-26",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 1,
+          "quote": "目标概要“开始担任本基金经理的日期”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "exchange_names",
+      "label": "场内简称与扩位证券简称",
+      "expected_value": "NOT_APPLICABLE",
+      "status": "NOT_APPLICABLE",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "产品概况为契约型开放式；报告未列场内简称或扩位证券简称",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "reason": "开放式基金；配置的定期报告未披露交易所上市简称字段，视为不适用。",
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 1,
+          "quote": "目标概要“场内简称与扩位证券简称”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "investment_objective",
+      "label": "投资目标",
+      "expected_value": "本基金属成长型基金，主要通过投资于具有良好成长性的上市公司的股票，在保持基金资产安全性和流动性的前提下，实现基金的长期资本增值。",
+      "status": "CONFIRMED",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "投资目标：本基金属成长型基金，主要通过投资于具有良好成长性的上市公司的股票，在保持基金资产安全性和流动性的前提下，实现基金的长期资本增值。",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 2,
+          "quote": "目标概要“投资目标”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "investment_strategy",
+      "label": "主要投资策略",
+      "expected_value": "主要投资策略包括股票投资策略、债券投资策略；重点投资预期利润或收入具有良好增长潜力的成长型上市公司股票，并从基本面分析挑选成长股。",
+      "status": "CONFIRMED",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "投资策略：主要投资策略包括股票投资策略、债券投资策略等；重点投资于预期利润或收入具有良好增长潜力的成长型上市公司发行的股票，从基本面的分析入手挑选成长股。",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 2,
+          "quote": "目标概要“主要投资策略”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "benchmark",
+      "label": "业绩比较基准",
+      "expected_value": "中证800成长指数收益率*70%+中债-综合全价（总值）指数收益率*30%",
+      "status": "EXPECTED_UNCONFIRMED",
+      "period_applicability": "effective 2026-07-27; Q2 report through 2026-06-30",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "业绩比较基准：本基金无业绩比较基准",
+        "kind": "PRIMARY",
+        "period": "report as-of 2026-06-30"
+      },
+      "supplementary_evidence": [],
+      "reason": "概要注明基准自2026-07-27起变更；Q2报告截至2026-06-30、送出日2026-07-21，时点不同，不能视为矛盾。",
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 2,
+          "quote": "目标概要“业绩比较基准”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "risk_return",
+      "label": "风险收益特征",
+      "expected_value": "本基金在证券投资基金中属于中高风险的品种，其长期平均的预期收益和风险高于债券基金和货币市场基金。",
+      "status": "CONFIRMED",
+      "period_applicability": "current_identity",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": 3,
+        "quote": "风险收益特征：本基金在证券投资基金中属于中高风险的品种，其长期平均的预期收益和风险高于债券基金和货币市场基金。",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 2,
+          "quote": "目标概要“风险收益特征”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "management_fee",
+      "label": "管理费率",
+      "expected_value": "固定费率 1.20%/年",
+      "status": "EXPECTED_UNCONFIRMED",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": "1-14",
+        "quote": "逐页核验2026年第2季度报告全文（PDF第1-14页）：未披露该费用率/2026年度费用金额；报告期财务资料未经审计。",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "reason": "配置的唯一参考文件（2026年第2季度报告）未披露目标概要中的费率/年度费用金额；目标概要值因此无法由本案参考来源独立确认。",
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 4,
+          "quote": "目标概要“管理费率”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "custody_fee",
+      "label": "托管费率",
+      "expected_value": "固定费率 0.20%/年",
+      "status": "EXPECTED_UNCONFIRMED",
+      "period_applicability": "applicable_at_summary_compilation",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": "1-14",
+        "quote": "逐页核验2026年第2季度报告全文（PDF第1-14页）：未披露该费用率/2026年度费用金额；报告期财务资料未经审计。",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "reason": "配置的唯一参考文件（2026年第2季度报告）未披露目标概要中的费率/年度费用金额；目标概要值因此无法由本案参考来源独立确认。",
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 4,
+          "quote": "目标概要“托管费率”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "audit_fee",
+      "label": "审计费用",
+      "expected_value": "人民币55,000.00元/年（2026年度初始预估）",
+      "status": "EXPECTED_UNCONFIRMED",
+      "period_applicability": "2026 annual estimate at summary compilation, not actual incurred amount",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": "1-14",
+        "quote": "逐页核验2026年第2季度报告全文（PDF第1-14页）：未披露该费用率/2026年度费用金额；报告期财务资料未经审计。",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "reason": "配置的唯一参考文件（2026年第2季度报告）未披露目标概要中的费率/年度费用金额；目标概要值因此无法由本案参考来源独立确认。",
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 4,
+          "quote": "目标概要“审计费用”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    },
+    {
+      "key": "disclosure_fee",
+      "label": "信息披露费",
+      "expected_value": "人民币120,000.00元/年（2026年度初始预估）",
+      "status": "EXPECTED_UNCONFIRMED",
+      "period_applicability": "2026 annual estimate at summary compilation, not actual incurred amount",
+      "primary_evidence": {
+        "role": "primary_reference",
+        "path": "assets/华夏成长证券投资基金/2026-07-21_2026年第2季度报告.pdf",
+        "pdf_page": "1-14",
+        "quote": "逐页核验2026年第2季度报告全文（PDF第1-14页）：未披露该费用率/2026年度费用金额；报告期财务资料未经审计。",
+        "kind": "PRIMARY"
+      },
+      "supplementary_evidence": [],
+      "reason": "配置的唯一参考文件（2026年第2季度报告）未披露目标概要中的费率/年度费用金额；目标概要值因此无法由本案参考来源独立确认。",
+      "target_evidence": [
+        {
+          "role": "target",
+          "path": "assets/华夏成长证券投资基金/2026-07-27_产品资料概要更新_A份额.pdf",
+          "pdf_page": 4,
+          "quote": "目标概要“信息披露费”字段原文；用于确认被核验值",
+          "kind": "TARGET"
+        }
+      ]
+    }
+  ],
+  "review_note": "逐页人工核验 SHA-256 与 manifest 一致的目标概要、2026年第2季度报告及 fallback case 的招募说明书。16个字段均记录来源角色、PDF页码、原文定位和期间适用性；基准变更时点、年度费用预估保留 EXPECTED_UNCONFIRMED。目标概要证据用于识别目标值，不代替主/补充参考来源。"
+}

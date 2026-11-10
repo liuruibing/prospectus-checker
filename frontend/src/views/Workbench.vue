@@ -1,5 +1,6 @@
 <template>
-  <div class="workbench-page">
+  <product-summary-workbench v-if="activeJob && activeJob.workflow_id === 'product-summary-verification'" :task-id="$route.params.taskId" />
+  <div v-else class="workbench-page">
     <header class="app-topbar">
       <div class="brand-block">
         <div class="brand-logo">审</div>
@@ -206,6 +207,7 @@
 import axios from "axios";
 import PdfViewer from "../components/PdfViewer.vue";
 import UploadDialog from "../components/UploadDialog.vue";
+import ProductSummaryWorkbench from "./ProductSummaryWorkbench.vue";
 
 const STATUS_LABELS = {
   MATCH: "一致",
@@ -213,6 +215,7 @@ const STATUS_LABELS = {
   UNRESOLVED: "待人工复核",
   FUND_MISMATCH: "基金身份不一致",
   DATE_MISMATCH: "文件日期不适配",
+  WRONG_DOCUMENT_TYPE: "文件类型不适配",
   UNRESOLVED_STRUCTURE: "结构待复核",
   MISSING_MODULE: "缺少模块",
   MISSING_ROW: "单侧出现",
@@ -223,7 +226,7 @@ const STATUS_LABELS = {
 
 export default {
   name: "ComparisonWorkbench",
-  components: { PdfViewer, UploadDialog },
+  components: { PdfViewer, UploadDialog, ProductSummaryWorkbench },
   data() {
     return {
       activeJob: null,
@@ -283,6 +286,8 @@ export default {
       return this.documentDisplayDate("periodic_report");
     },
     reportDateLabel() {
+      const info = this.result && this.result.documents.periodic_report.document_info;
+      if (info && info.period_end) return "报告期末";
       const metadata = this.documentMetadata("periodic_report");
       return metadata && metadata.display_date_label || "报告期末";
     },
@@ -344,6 +349,11 @@ export default {
       return preflight[role] || null;
     },
     documentDisplayDate(role) {
+      const info = this.result && this.result.documents[role] && this.result.documents[role].document_info;
+      if (role === "periodic_report" && info && /^\d{4}-\d{2}-\d{2}$/.test(info.period_end || "")) {
+        const parts = info.period_end.split("-").map(Number);
+        return `${parts[0]}年${parts[1]}月${parts[2]}日`;
+      }
       const metadata = this.documentMetadata(role);
       const interval = metadata && (metadata.display_date_interval || metadata.date_interval);
       if (!interval || !interval.start) return "";
@@ -362,6 +372,14 @@ export default {
       const module = this.result.modules[this.selectedModuleIndex];
       if (!module) return [];
       const differences = this.selectedDifference ? [this.selectedDifference] : module.differences;
+      if (!differences.length) {
+        const disclosures = module[role === "prospectus" ? "prospectus_disclosures" : "periodic_disclosures"] || [];
+        return disclosures.filter((item) => item.evidence).map((item, index) => Object.assign({}, item.evidence, {
+          difference_status: module.status,
+          field_label: module.status === "MATCH" ? "一致性依据" : "待复核依据",
+          id: module.rule_id + ":disclosure:" + index,
+        }));
+      }
       return differences
         .map((difference) => {
           const source = difference[role];
@@ -475,6 +493,7 @@ export default {
       return STATUS_LABELS[status] || status || "待复核";
     },
     moduleStatusLabel(module) {
+      if (module.status === "UNRESOLVED_STRUCTURE" && module.disclosure_ranges) return "口径待确认";
       if (module.status === "UNRESOLVED_STRUCTURE" && !module.differences.length) return "证据待复核";
       return this.statusLabel(module.status);
     },
@@ -484,12 +503,13 @@ export default {
     tagType(status) {
       if (status === "MATCH") return "success";
       if (["MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE"].indexOf(status) >= 0) return "danger";
-      if (["FUND_MISMATCH", "DATE_MISMATCH", "UNRESOLVED", "UNRESOLVED_STRUCTURE", "UNRESOLVED_ROW_IDENTITY"].indexOf(status) >= 0) return "warning";
+      if (["FUND_MISMATCH", "DATE_MISMATCH", "WRONG_DOCUMENT_TYPE", "UNRESOLVED", "UNRESOLVED_STRUCTURE", "UNRESOLVED_ROW_IDENTITY"].indexOf(status) >= 0) return "warning";
       return "info";
     },
     moduleMessage(module) {
+      if (module.review_message) return module.review_message;
       if (module.status === "UNRESOLVED_STRUCTURE" && !module.differences.length) {
-        return "已定位字段未发现差异；部分行证据未能精确定位，请复核 PDF 原文。";
+        return "章节原文、报告期或适用范围尚未完成核验，请查看任务记录。";
       }
       if (module.status === "UNRESOLVED_STRUCTURE") return "模块结构或字段证据不足，需人工复核。";
       if (module.status === "MISSING_MODULE") return "未能识别到对应章节。";
@@ -512,13 +532,14 @@ export default {
       if (!this.result) return;
       const module = this.result.modules[moduleIndex];
       const rows = module && module[role === "prospectus" ? "prospectus_rows" : "periodic_rows"] || [];
+      const declarations = module && module[role === "prospectus" ? "prospectus_disclosures" : "periodic_disclosures"] || [];
       const evidence = rows.reduce((found, row) => {
         if (found) return found;
         const rowEvidence = row.row_evidence || row.rank_evidence;
         if (rowEvidence && rowEvidence.page) return rowEvidence;
         const fields = Object.values(row.fields || {});
         return fields.map((field) => field.evidence).find((item) => item && item.page) || null;
-      }, null);
+      }, null) || declarations.map((item) => item.evidence || item).find((item) => item && item.page);
       const viewer = this.$refs[role === "prospectus" ? "prospectusViewer" : "periodicReportViewer"];
       if (viewer && evidence) viewer.scrollToPage(evidence.page);
     },

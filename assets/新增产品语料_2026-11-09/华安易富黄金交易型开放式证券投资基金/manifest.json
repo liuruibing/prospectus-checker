@@ -1,0 +1,141 @@
+{
+  "fund_code": "518880",
+  "name": "华安易富黄金交易型开放式证券投资基金",
+  "directory": "华安易富黄金交易型开放式证券投资基金",
+  "source_index_url": "http://eid.csrc.gov.cn/fund/disclose/fund_detail.do?fundId=2139",
+  "summary_publication_date": "2026-03-17",
+  "documents": [
+    {
+      "file": "2026-03-17_招募说明书更新.pdf",
+      "relative_path": "华安易富黄金交易型开放式证券投资基金/2026-03-17_招募说明书更新.pdf",
+      "role": "prospectus",
+      "publication_date": "2026-03-17",
+      "official_title": "华安黄金ETF ：2026招募说明书更新 2026-03-17",
+      "official_instance_id": "1443596",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1443596",
+      "downloaded_at": "2026-11-09T16:25:07+08:00",
+      "sha256": "21f737828d86149490c98ecba584ebb1c75604e2cebc527e7d3e395547a6a539",
+      "bytes": 1282332,
+      "pages": 132,
+      "extractable_text_chars": 94456,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE"
+    },
+    {
+      "file": "2026-03-17_产品资料概要更新.pdf",
+      "relative_path": "华安易富黄金交易型开放式证券投资基金/2026-03-17_产品资料概要更新.pdf",
+      "role": "product_summary",
+      "publication_date": "2026-03-17",
+      "official_title": "华安黄金ETF ：2026基金产品资料概要更新 2026-03-17",
+      "official_instance_id": "1443534",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1443534",
+      "downloaded_at": "2026-11-09T16:25:06+08:00",
+      "sha256": "2685237e3b66087f2360b40f6baa64173bc50f93680128c0fd59cbd4f5a42b31",
+      "bytes": 254493,
+      "pages": 4,
+      "extractable_text_chars": 3993,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 1,
+          "quote": "产品概况基金简称华安黄金ETF基金代码518880基金管理人华安基金管理有限公司"
+        }
+      ]
+    },
+    {
+      "file": "2026-01-22_2025年第4季度报告.pdf",
+      "relative_path": "华安易富黄金交易型开放式证券投资基金/2026-01-22_2025年第4季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2026-01-22",
+      "official_title": "华安黄金ETF ：2025第四季度报告 2026-01-22",
+      "official_instance_id": "1423770",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1423770",
+      "downloaded_at": "2026-11-09T16:25:07+08:00",
+      "sha256": "5e426367a648364787c17eb53a1749fa4afd1144a6af896b9f3aa70eaaab8c92",
+      "bytes": 480470,
+      "pages": 12,
+      "extractable_text_chars": 9015,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 2,
+          "quote": "ETF(扩位简称:黄金ETF)基金主代码518880基金运作方式交易型开放式基金合"
+        }
+      ]
+    },
+    {
+      "file": "2025-10-28_2025年第3季度报告.pdf",
+      "relative_path": "华安易富黄金交易型开放式证券投资基金/2025-10-28_2025年第3季度报告.pdf",
+      "role": "quarterly",
+      "publication_date": "2025-10-28",
+      "official_title": "华安黄金ETF ：2025第三季度报告 2025-10-28",
+      "official_instance_id": "1375683",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1375683",
+      "downloaded_at": "2026-11-09T16:25:07+08:00",
+      "sha256": "74947daef541654206a3ee57f7c7313104a6b39f8df9892c03a0ff2f83667426",
+      "bytes": 479336,
+      "pages": 12,
+      "extractable_text_chars": 8974,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": true,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 2,
+          "quote": "ETF(扩位简称:黄金ETF)基金主代码518880基金运作方式交易型开放式基金合"
+        }
+      ]
+    },
+    {
+      "file": "2025-08-30_2025年中期报告.pdf",
+      "relative_path": "华安易富黄金交易型开放式证券投资基金/2025-08-30_2025年中期报告.pdf",
+      "role": "interim",
+      "publication_date": "2025-08-30",
+      "official_title": "华安黄金ETF ：2025中期报告 2025-08-30",
+      "official_instance_id": "1349872",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1349872",
+      "downloaded_at": "2026-11-09T16:25:08+08:00",
+      "sha256": "1a0c0697295bfff1f7f57928be719d412426f713c852b57f697be59d6c88bf48",
+      "bytes": 1517789,
+      "pages": 46,
+      "extractable_text_chars": 45653,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 5,
+          "quote": "ETF(扩位简称:黄金ETF)基金主代码518880基金运作方式交易型开放式基金合"
+        }
+      ]
+    },
+    {
+      "file": "2025-03-31_2024年年度报告.pdf",
+      "relative_path": "华安易富黄金交易型开放式证券投资基金/2025-03-31_2024年年度报告.pdf",
+      "role": "annual",
+      "publication_date": "2025-03-31",
+      "official_title": "华安黄金ETF ：2024年度报告 2025-03-31",
+      "official_instance_id": "1254800",
+      "source_url": "http://eid.csrc.gov.cn/fund/disclose/instance_show_pdf_id.do?instanceid=1254800",
+      "downloaded_at": "2026-11-09T16:25:08+08:00",
+      "sha256": "9dae59de6a886e82f2120497deabdb4991b1786197940571761ba71b99273ca0",
+      "bytes": 1711621,
+      "pages": 57,
+      "extractable_text_chars": 57179,
+      "fund_name_in_first_three_pages": true,
+      "fund_code_in_first_three_pages": false,
+      "validation": "PDF_HEADER_AND_ALL_PAGES_READABLE",
+      "fund_code_evidence": [
+        {
+          "page": 5,
+          "quote": "ETF(扩位简称:黄金ETF)基金主代码518880基金运作方式交易型开放式基金合"
+        }
+      ]
+    }
+  ]
+}
