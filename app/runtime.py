@@ -206,7 +206,8 @@ class ProductSummaryVerificationWorkflow:
             if state.get("preflight", {}).get("blocked"):
                 docs = state["documents"]
                 result = {
-                    "schema_version": 3, "workflow_id": self.id, "rules_version": SUMMARY_RULE_VERSION,
+                    "schema_version": 3, "workflow_id": self.id,
+                    "rules_version": context.input_val.get("rules_version", SUMMARY_RULE_VERSION),
                     "input_contract_version": context.input_val.get("input_contract_version", "product-summary-input-v2"),
                     "result_schema_version": 3,
                     "status": "INCOMPATIBLE", "difference_count": 0, "unresolved_count": 0,
@@ -235,12 +236,14 @@ class ProductSummaryVerificationWorkflow:
                 trace=context.trace_callback,
                 progress=report_progress,
                 historical=bool(context.input_val.get("historical", True)),
+                rule_snapshot=context.input_val.get("rule_snapshot"),
             )
             for role, doc in state["documents"].items():
                 preview = doc.get("preview_id")
                 result["documents"].setdefault(role, {})["preview_id"] = preview
                 result["documents"][role]["task_id"] = context.run_id
             result["run_id"] = context.run_id
+            result["rules_version"] = context.input_val.get("rules_version", result.get("rules_version"))
             result["input_contract_version"] = context.input_val.get("input_contract_version", "product-summary-input-v2")
             result["result_schema_version"] = result.get("schema_version", 3)
             result["preflight"] = state.get("preflight", {})
@@ -425,6 +428,7 @@ class InvestmentComparisonWorkflow:
                 provider=context.provider,
                 force_refresh=bool(payload.get("force_refresh", False)),
                 trace_callback=getattr(context, "trace_callback", None),
+                rule_snapshot=payload.get("rule_snapshot"),
             )
             get_stream_writer()({
                 "event": "workflow.progress",
@@ -445,6 +449,7 @@ class InvestmentComparisonWorkflow:
                 provider=context.provider,
                 force_refresh=bool(payload.get("force_refresh", False)),
                 trace_callback=getattr(context, "trace_callback", None),
+                rule_snapshot=payload.get("rule_snapshot"),
             )
             get_stream_writer()({
                 "event": "workflow.progress",
@@ -470,6 +475,7 @@ class InvestmentComparisonWorkflow:
             result["documents"]["prospectus"]["preview_id"] = payload.get("prospectus_preview_id")
             result["documents"]["periodic_report"]["preview_id"] = payload.get("periodic_preview_id")
             result["preflight"] = state["preflight"]
+            result["rules_version"] = payload.get("rules_version")
             get_stream_writer()({
                 "event": "workflow.completed",
                 "data": {"runId": getattr(context, "run_id", None), "result": result},

@@ -160,6 +160,14 @@ def test_fallback_rate_source_date_must_be_applicable_to_summary_compilation():
     documents["prospectus"]["metadata"]["date_interval"] = {"start": "2026-01-01", "end": "2026-01-31"}
     assert _fallback_source_date_status(rule, documents, "prospectus", historical=True) == ("ELIGIBLE", None)
 
+    documents["prospectus"]["metadata"]["date_interval"] = {"start": "2026-01-26", "end": "2026-01-26"}
+    assert _fallback_source_date_status(rule, documents, "prospectus", historical=True) == (
+        "DATE_UNCONFIRMED", "补充文件与概要日期相同，无法仅凭日期确认先后或适用关系。"
+    )
+
+    documents["prospectus"]["metadata"]["date_interval"] = {"start": "2026-01-25", "end": "2026-01-25"}
+    assert _fallback_source_date_status(rule, documents, "prospectus", historical=True) == ("ELIGIBLE", None)
+
 
 def test_item_id_is_primary_join_key_and_excel_row_is_read_only_compatibility():
     rows = {2: "fund_code"}

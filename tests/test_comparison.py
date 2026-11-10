@@ -98,6 +98,70 @@ def test_unique_source_backed_unmapped_asset_rows_match_by_label():
     assert result["modules"][0]["status"] == "MATCH"
 
 
+def test_model_semantic_asset_key_aligns_equivalent_source_labels():
+    left_row = asset_row("405,540,438.99", "0.11")
+    left_row.update(row_key="other_assets", label="其他资产")
+    right_row = asset_row("405,540,438.99", "0.11")
+    right_row.update(row_key="other_assets", label="其他各项资产")
+
+    result = compare_documents(
+        document(asset_rows=[left_row]),
+        document(asset_rows=[right_row]),
+    )
+
+    assert result["status"] == "MATCH"
+    assert result["difference_count"] == 0
+
+
+def test_asset_rows_with_different_model_keys_align_by_unique_source_label_and_parent():
+    parent_left = asset_row("100", "100")
+    parent_left.update(row_key="top_level_left", parent_key=None, label="权益投资")
+    child_left = asset_row("100", "100")
+    child_left.update(row_key="equity_detail_left", parent_key="top_level_left", label="其中：股票")
+    parent_right = asset_row("100", "100")
+    parent_right.update(row_key="top_level_right", parent_key=None, label="权益投资")
+    child_right = asset_row("100", "100")
+    child_right.update(row_key="equity_detail_right", parent_key="top_level_right", label="其中：股票")
+
+    result = compare_documents(
+        document(asset_rows=[parent_left, child_left]),
+        document(asset_rows=[parent_right, child_right]),
+    )
+
+    assert result["status"] == "MATCH"
+    assert result["difference_count"] == 0
+
+
+def test_ambiguous_asset_source_labels_do_not_get_fallback_matched():
+    def duplicate(key: str):
+        row = asset_row("10", "1")
+        row.update(row_key=key, parent_key=None, label="补充项目")
+        return row
+
+    result = compare_documents(
+        document(asset_rows=[duplicate("left_a"), duplicate("left_b")]),
+        document(asset_rows=[duplicate("right_a"), duplicate("right_b")]),
+    )
+
+    assert result["status"] == "UNRESOLVED"
+    assert result["modules"][0]["status"] == "UNRESOLVED_STRUCTURE"
+
+
+def test_duplicate_model_semantic_asset_keys_remain_unresolved():
+    def duplicate(label: str):
+        row = asset_row("10", "1")
+        row.update(row_key="other_assets", label=label)
+        return row
+
+    result = compare_documents(
+        document(asset_rows=[duplicate("其他资产"), duplicate("其他项目")]),
+        document(asset_rows=[duplicate("其他资产"), duplicate("其他项目")]),
+    )
+
+    assert result["status"] == "UNRESOLVED"
+    assert result["modules"][0]["status"] == "UNRESOLVED_STRUCTURE"
+
+
 def test_duplicate_unmapped_asset_labels_remain_unresolved():
     def unmapped_asset_row():
         row = asset_row("10", "1")
@@ -229,6 +293,51 @@ def test_prospectus_top_n_is_compared_against_superset_report_without_report_onl
     assert compared['disclosure_ranges'] == {
         'prospectus': ('top_n', 5), 'periodic_report': ('all', None),
     }
+
+
+def test_unknown_aggregate_scope_still_compares_target_rows_and_ignores_report_extras():
+    def stock(code: str, *, investment_scope: str, amount: str = '10'):
+        return {
+            'label': f'证券{code}', 'stock_name': f'证券{code}', 'stock_code': code,
+            'market_scope': 'domestic', 'investment_scope': investment_scope,
+            'fields': {
+                'fair_value': value(amount), 'quantity': value('2', '股'),
+                'ratio_of_net_assets': value('1', '%'),
+            },
+        }
+
+    target_rows = [stock('600001', investment_scope='index'), stock('600002', investment_scope='active')]
+    left, right = document(stock_rows=target_rows), document(stock_rows=[
+        *target_rows, stock('600003', investment_scope='index'),
+    ])
+    left['modules'][2]['scope'].update(disclosure_scope='unknown', limit=None)
+    right['modules'][2]['scope'].update(disclosure_scope='all', limit=None)
+
+    compared = compare_documents(left, right)['modules'][2]
+
+    assert compared['status'] == 'MATCH'
+    assert compared['differences'] == []
+    assert {row['stock_code'] for row in compared['periodic_rows']} == {'600001', '600002'}
+
+
+def test_unknown_target_scope_does_not_call_unmatched_target_security_missing():
+    target = {
+        'label': '目标证券', 'stock_name': '目标证券', 'stock_code': '600001',
+        'market_scope': 'domestic', 'investment_scope': 'index',
+        'fields': {
+            'fair_value': value('10'), 'quantity': value('2', '股'),
+            'ratio_of_net_assets': value('1', '%'),
+        },
+    }
+    left, right = document(stock_rows=[target]), document(stock_rows=[])
+    left['modules'][2]['scope'].update(disclosure_scope='unknown', limit=None)
+    right['modules'][2]['scope'].update(disclosure_scope='all', limit=None)
+
+    compared = compare_documents(left, right)['modules'][2]
+
+    assert compared['status'] == 'UNRESOLVED_STRUCTURE'
+    assert compared['differences'] == []
+    assert '范围或对应证券证据不足' in compared['review_message']
 
 
 def test_prospectus_target_rows_are_compared_even_when_a_report_has_extra_rows():

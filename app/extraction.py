@@ -16,13 +16,15 @@ from typing import Any, Callable
 import pymupdf as fitz
 
 from app.domain import COMMON_RULE_FILE, MODULE_RULES, normalize_numeric, title_aliases
-from app.chapter_sources import ChapterCache, _centers_map_uniquely, _header_centers, bind_sources, column_unit, markdown_rows, render_catalogue, resolve_data_columns, source_catalogue, source_gaps
+from app.chapter_sources import ChapterCache, _centers_map_uniquely, _header_centers, bind_sources, column_unit, markdown_rows, merge_source_batch_modules, render_catalogue, resolve_data_columns, source_catalogue, source_catalogue_batches, source_gaps
 from app.pdf_worker import run_pdf
 from app.pdf_document import page_tables, require_ready, verified_conversion
+from app.rule_compiler import capture_rule_set, effective_rule_text
 from app.headings import parse_heading
 
 MAX_PDF_PAGES = int(os.getenv("PROSPECTUS_MAX_PAGES", "240"))
 MAX_ANALYSIS_CHARS = int(os.getenv("PROSPECTUS_MAX_ANALYSIS_CHARS", "150000"))
+SOURCE_BATCH_CHARS = int(os.getenv("PROSPECTUS_SOURCE_BATCH_CHARS", "24000"))
 SECTION_SCORE_LOOKAHEAD = 35
 SECTION_PARENT_SCORE_TOLERANCE = 5
 CONTENTS_LINE_PENALTY = 100
@@ -764,18 +766,26 @@ def _table_bbox(
     return _rect_array(matches[0]) if len(matches) == 1 else None
 
 
-def _cross_page_column_tolerance(rule_text: str) -> float:
-    in_section = False
-    for line in rule_text.splitlines():
-        if line.startswith("## "):
-            in_section = line[3:].strip() == "cross_page_table_policy"
-            continue
-        if not in_section or not line.startswith("|"):
-            continue
-        cells = [cell.strip().strip("` ") for cell in line.strip("|").split("|")]
-        if len(cells) >= 2 and cells[0] == "normalized_column_boundary_tolerance":
-            return float(cells[1])
-    raise ValueError("CROSS_PAGE_TABLE_POLICY_MISSING: normalized_column_boundary_tolerance")
+# This is a document-layout matching parameter, not a business rule. Keep it
+# with the table geometry implementation so prose edits cannot silently alter
+# cross-page table association.
+CROSS_PAGE_COLUMN_BOUNDARY_TOLERANCE = 0.015
+
+
+def _cross_page_column_tolerance(_rule_text: str | None = None) -> float:
+    """Return the parser's layout tolerance; retained arg is compatibility-only."""
+    return CROSS_PAGE_COLUMN_BOUNDARY_TOLERANCE
+
+
+def capture_investment_rule_snapshot() -> dict[str, Any]:
+    """Capture one immutable execution bundle for a comparison task."""
+    rule_texts = {rule["rule_id"]: effective_rule_text(Path(rule["file"])) for rule in MODULE_RULES}
+    common_rules = effective_rule_text(COMMON_RULE_FILE)
+    return {
+        **capture_rule_set("investment"),
+        "rule_texts": rule_texts,
+        "common_rules": common_rules,
+    }
 
 
 def _header_column_maps(
@@ -1215,12 +1225,17 @@ def _verify_module(
             row_warnings.append("row_quote_identity_mismatch")
         row_key = identity["row_key"] or ""
         if rule["rule_id"] == "investment.asset_allocation":
-            allowed_keys = set(re.findall(r"^\|\s*`([^`]+)`\s*\|", Path(rule["file"]).read_text(encoding="utf-8"), re.MULTILINE))
-            if row_key and row_key not in allowed_keys:
+            allowed_keys = set(re.findall(r"^\|\s*`([^`]+)`\s*\|", effective_rule_text(Path(rule["file"])), re.MULTILINE))
+            # A manager-authored Chinese rule no longer needs a static row-key
+            # registry. Keep a model-derived semantic key only when it is a
+            # scalar identifier and the corresponding source row was located.
+            # This lets equivalent labels (for example “其他资产” and
+            # “其他各项资产”) align without maintaining per-label code aliases.
+            valid_semantic_key = bool(re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", row_key))
+            if row_key and row_key not in allowed_keys and (
+                not valid_semantic_key or row_evidence["status"] != "LOCATED"
+            ):
                 row_key = ""
-                # The rule explicitly allows source-backed rows outside its
-                # known key registry. Keep the verified raw label so the
-                # comparer can use its unique label/parent fallback.
                 if row_evidence["status"] != "LOCATED":
                     unresolved = True
         validated_rows.append({
@@ -1392,6 +1407,8 @@ async def _extract_chapters(
     cache = ChapterCache()
     namespace = getattr(provider, "cache_namespace", None)
     use_cache = isinstance(namespace, dict) and os.getenv("PROSPECTUS_CACHE_ENABLED", "1") != "0"
+    batch_concurrency = max(1, int(os.getenv("PROSPECTUS_SOURCE_BATCH_CONCURRENCY", "4")))
+    provider_semaphore = asyncio.Semaphore(batch_concurrency)
     metadata_pages = {1, 2, 3}
     chapter_pages = [page["physical_page"] for context in contexts.values() for page in context.get("physical_pages", [])]
     if chapter_pages:
@@ -1465,6 +1482,30 @@ async def _extract_chapters(
         prompt = f"文档角色：{role}；文件：{filename}。\n模块：{rule_id}。\n【模块规则】\n{rule_texts[rule_id]}\n【JSON 结构】\n{json.dumps(schema, ensure_ascii=False)}\n{source_text}"
         if len(system) + len(prompt) > MAX_ANALYSIS_CHARS:
             raise ValueError(f"PDF_ANALYSIS_LIMIT_EXCEEDED: {rule_id}; no content was truncated")
+        batch_prompts: list[str] = []
+        source_batches = []
+        if source_mode and len(system) + len(prompt) > SOURCE_BATCH_CHARS:
+            source_batches = source_catalogue_batches(context, records, tables, SOURCE_BATCH_CHARS)
+            if len(source_batches) > 1:
+                for batch_index, batch in enumerate(source_batches, start=1):
+                    batch_source = (
+                        "【章节标题上下文】\n" + "\n".join(batch["section_headings"])
+                        + "\n【当前逻辑表表头】\n" + json.dumps(batch["table"], ensure_ascii=False)
+                        + "\n【本批源表行；每个 source_id 仅返回一次】\n"
+                        + json.dumps(batch["rows"], ensure_ascii=False, separators=(",", ":"))
+                    )
+                    batch_task = (
+                        f"当前为第 {batch_index}/{len(source_batches)} 批。只分类本批列出的源表行；"
+                        "章节标题和表头提供语义上下文，不代表额外源行。每个本批 source_id 恰好返回一次，"
+                        "不得补入其他批次行。父子关系无法从本批及标题上下文确认时留空，不猜测。"
+                    )
+                    batch_prompts.append(
+                        f"文档角色：{role}；文件：{filename}。\n模块：{rule_id}。\n【模块规则】\n"
+                        f"{rule_texts[rule_id]}\n【JSON 结构】\n{json.dumps(schema, ensure_ascii=False)}\n"
+                        f"{batch_task}\n{batch_source}\n【文档元数据原文，仅用于确认报告期间】\n{metadata_text}"
+                    )
+                if any(len(system) + len(item) > MAX_ANALYSIS_CHARS for item in batch_prompts):
+                    raise ValueError(f"PDF_ANALYSIS_LIMIT_EXCEEDED: {rule_id}; a source batch exceeds the configured limit")
         safe_id = rule_id.replace(".", "_")
         prefix = f"{role}/chapters/{safe_id}"
         _trace_artifact(trace_callback, f"{prefix}/sources.json", {"rows": records, "unmapped_markdown_rows": gaps}, role=role)
@@ -1472,28 +1513,53 @@ async def _extract_chapters(
                          "common_rules": hashlib.sha256(COMMON_RULE_FILE.read_bytes()).hexdigest()}, system, prompt) if use_cache else None
         hit = cache.load(key) if key and not force_refresh else None
         request = {"provider": type(provider).__name__, "model": getattr(provider, "model_name", None),
-                   "system_prompt": system, "user_prompt": prompt, "source_mode": source_mode, "cache_key": key}
+                   "system_prompt": system, "user_prompt": prompt if not batch_prompts else None,
+                   "source_mode": source_mode, "batch_count": len(batch_prompts) or 1, "cache_key": key}
         _trace_artifact(trace_callback, f"{prefix}/model_request.json", request, role=role)
         last_module, last_info = None, {}
         for attempt in range(2):
             started = time.monotonic()
             _trace_artifact(trace_callback, f"{prefix}/attempt_{attempt + 1}/model_request.json",
-                            {**request, "user_prompt": prompt}, role=role)
+                            {**request, "user_prompt": prompt if not batch_prompts else None}, role=role)
             _trace_event(trace_callback, "chapter_request_started", role=role, details={"rule_id": rule_id, "attempt": attempt + 1,
-                         "prompt_chars": len(system) + len(prompt), "source_rows": len(records), "cache_hit": bool(hit)})
+                         "prompt_chars": max([len(system) + len(item) for item in batch_prompts] or [len(system) + len(prompt)]),
+                         "source_rows": len(records), "batch_count": len(batch_prompts) or 1, "cache_hit": bool(hit)})
             try:
-                response = hit["response"] if hit else await provider.generate_text(system, prompt)
-                _trace_artifact(trace_callback, f"{prefix}/attempt_{attempt + 1}/model_response.txt", str(response), role=role)
-                _trace_event(trace_callback, "chapter_response_received", role=role, details={"rule_id": rule_id,
-                             "attempt": attempt + 1, "duration_ms": round((time.monotonic() - started) * 1000),
-                             "response_chars": len(response), "cache_hit": bool(hit), **getattr(response, "metrics", {})})
-                parsed = _json_object(response)
-                module = parsed.get("module", parsed)
-                if isinstance(parsed.get("modules"), list):
-                    module = next((item for item in parsed["modules"] if item.get("rule_id") == rule_id), {})
-                if not isinstance(module, dict) or not isinstance(module.get("found"), bool) or not isinstance(module.get("rows"), list):
-                    raise ValueError("AI_INVALID_RESPONSE: expected found boolean and rows list")
-                last_info = parsed.get("document_info", {})
+                prompts = [prompt] if hit else (batch_prompts or [prompt])
+                async def run_prompt(batch_index: int, batch_prompt: str):
+                    batch_started = time.monotonic()
+                    if hit:
+                        batch_response = hit["response"]
+                    else:
+                        async with provider_semaphore:
+                            batch_response = await provider.generate_text(system, batch_prompt)
+                    response_text = str(batch_response)
+                    _trace_artifact(trace_callback,
+                                    f"{prefix}/attempt_{attempt + 1}/batch_{batch_index:03d}/model_request.json",
+                                    {"system_prompt": system, "user_prompt": batch_prompt}, role=role)
+                    _trace_artifact(trace_callback,
+                                    f"{prefix}/attempt_{attempt + 1}/batch_{batch_index:03d}/model_response.txt",
+                                    response_text, role=role)
+                    _trace_event(trace_callback, "chapter_response_received", role=role, details={"rule_id": rule_id,
+                                 "attempt": attempt + 1, "batch_index": batch_index, "batch_count": len(prompts),
+                                 "duration_ms": round((time.monotonic() - batch_started) * 1000),
+                                 "response_chars": len(response_text), "cache_hit": bool(hit), **getattr(batch_response, "metrics", {})})
+                    parsed = _json_object(batch_response)
+                    module_part = parsed.get("module", parsed)
+                    if isinstance(parsed.get("modules"), list):
+                        module_part = next((item for item in parsed["modules"] if item.get("rule_id") == rule_id), {})
+                    if not isinstance(module_part, dict) or not isinstance(module_part.get("found"), bool) or not isinstance(module_part.get("rows"), list):
+                        raise ValueError("AI_INVALID_RESPONSE: expected found boolean and rows list")
+                    return module_part, parsed.get("document_info") or {}, response_text
+
+                batch_results = await asyncio.gather(*(
+                    run_prompt(batch_index, batch_prompt)
+                    for batch_index, batch_prompt in enumerate(prompts, start=1)
+                ))
+                parsed_modules = [item[0] for item in batch_results]
+                responses = [item[2] for item in batch_results]
+                last_info = next((item[1] for item in batch_results if item[1]), last_info)
+                module = merge_source_batch_modules(parsed_modules, records) if source_batches else parsed_modules[0]
                 if source_mode:
                     module = bind_sources(module, records, rule)
                     last_module = module
@@ -1516,7 +1582,8 @@ async def _extract_chapters(
                 info, _ = _verify_metadata(document, pages, last_info)
                 if key and not hit and checked["status"] == "EXTRACTED" and (rule is not MODULE_RULES[0] or info.get("period_end")):
                     try:
-                        cache.save(key, str(response))
+                        cache_response = json.dumps({"module": module, "document_info": last_info}, ensure_ascii=False) if source_batches else responses[0]
+                        cache.save(key, cache_response)
                     except OSError as cache_error:
                         _trace_event(trace_callback, "chapter_cache_write_failed", role=role,
                                      details={"rule_id": rule_id, "error": str(cache_error)})
@@ -1530,7 +1597,11 @@ async def _extract_chapters(
                     partial["source_warnings"] = [*partial.get("source_warnings", []), f"章节识别未完成：{exc}"]
                     return partial, last_info
                 # Only this chapter is retried; successful siblings remain intact.
-                prompt += "\n上次输出未通过校验，请完整重新返回本章节：" + str(exc)
+                if batch_prompts:
+                    batch_prompts = [item + "\n上次输出未通过校验，请确保只返回本批所有 source_id：" + str(exc)
+                                     for item in batch_prompts]
+                else:
+                    prompt += "\n上次输出未通过校验，请完整重新返回本章节：" + str(exc)
         raise AssertionError("unreachable")
 
     tasks = [asyncio.create_task(extract(rule)) for rule in MODULE_RULES]
@@ -1549,6 +1620,7 @@ async def analyze_document(
     *, filename: str, content: bytes, role: str, provider: Any,
     trace_callback: Callable[[dict[str, Any]], None] | None = None,
     force_refresh: bool = False,
+    rule_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Verify continuous PDF Markdown before chapter/model extraction."""
     if role not in {"prospectus", "periodic_report"}:
@@ -1563,8 +1635,19 @@ async def analyze_document(
     })
     _trace_artifact(trace_callback, f"{role}/pymupdf_pages.json", pages, role=role)
     try:
-        rule_texts = {rule["rule_id"]: Path(rule["file"]).read_text(encoding="utf-8") for rule in MODULE_RULES}
-        common_rules = COMMON_RULE_FILE.read_text(encoding="utf-8")
+        active_rules = rule_snapshot or capture_investment_rule_snapshot()
+        if active_rules.get("scope") != "investment" or not isinstance(active_rules.get("rule_texts"), dict):
+            raise ValueError("INVESTMENT_RULE_SNAPSHOT_INVALID")
+        rule_texts = active_rules["rule_texts"]
+        common_rules = str(active_rules.get("common_rules", ""))
+        if trace_callback:
+            _trace_artifact(trace_callback, "rules/rule_snapshot.json", {
+                "scope": active_rules.get("scope"),
+                "rules_version": active_rules.get("rules_version"),
+                "protocol_version": active_rules.get("protocol_version"),
+                "prompt_version": active_rules.get("prompt_version"),
+                "files": active_rules.get("files", {}),
+            }, role=role)
         _trace_artifact(trace_callback, "rules/common_公共规则.md", common_rules, role=role)
         for rule_id, rule_text in rule_texts.items():
             _trace_artifact(

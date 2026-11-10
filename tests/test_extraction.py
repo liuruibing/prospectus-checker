@@ -5,6 +5,11 @@ from pathlib import Path
 import pymupdf as fitz
 
 from app import extraction
+
+
+def test_cross_page_column_tolerance_is_independent_of_business_rule_text():
+    assert extraction._cross_page_column_tolerance("没有技术参数的中文公共规则") == 0.015
+    assert extraction._cross_page_column_tolerance("normalized_column_boundary_tolerance = 0.9") == 0.015
 from app.domain import MODULE_RULES
 
 
@@ -14,7 +19,7 @@ def test_numbered_child_heading_without_space_has_its_full_depth():
 
 
 def test_heading_alias_selects_complete_title_and_quote_ignores_source_comments():
-    rules = {rule['rule_id']: rule['file'].read_text() for rule in MODULE_RULES}
+    rules = {rule['rule_id']: extraction.effective_rule_text(rule['file']) for rule in MODULE_RULES}
     title = '5.3 报告期末按公允价值占基金资产净值比例大小排序的前十名股票投资明细'
     sentence = '该范围本期无持仓。'
     md = f'## {title}\n<!-- source-pages: 2 -->\n![原图：物理页 2](assets/page2.png)\n{sentence}\n## 5.4 债券投资\n其他内容'
@@ -93,7 +98,7 @@ def test_repeated_disclosure_with_two_occurrences_in_same_section_stays_ambiguou
 
 
 def test_complete_sections_accept_spacing_and_title_wording_variants():
-    rules = {rule['rule_id']: rule['file'].read_text(encoding='utf-8') for rule in MODULE_RULES}
+    rules = {rule['rule_id']: extraction.effective_rule_text(rule['file']) for rule in MODULE_RULES}
     markdown = '''## 12.1 期末基金资产组合情况
 |项目|金额|占基金总资产的比例|
 |现金|100|1.00|
@@ -122,7 +127,7 @@ def test_similar_heading_cannot_replace_the_asset_type_in_a_rule_title():
 
 
 def test_empty_stock_sections_keep_parent_and_stop_at_next_spaced_heading():
-    rules = {rule['rule_id']: rule['file'].read_text(encoding='utf-8') for rule in MODULE_RULES}
+    rules = {rule['rule_id']: extraction.effective_rule_text(rule['file']) for rule in MODULE_RULES}
     markdown = '''1 报告期末基金资产组合情况
 |项目|金额|占基金总资产的比例|
 |现金|100|100.00|
@@ -150,7 +155,7 @@ def test_empty_stock_sections_keep_parent_and_stop_at_next_spaced_heading():
 
 
 def test_empty_chapter_selection_does_not_borrow_next_chapters_table_score():
-    rules = {rule['rule_id']: rule['file'].read_text(encoding='utf-8') for rule in MODULE_RULES}
+    rules = {rule['rule_id']: extraction.effective_rule_text(rule['file']) for rule in MODULE_RULES}
     markdown = '''2 报告期末按行业分类的股票投资组合
 2.1 报告期末按行业分类的境内股票投资组合
 本基金本报告期末未持有股票。
@@ -226,7 +231,7 @@ def test_industry_total_accepts_located_metrics_without_row_bbox(monkeypatch):
             }],
         },
         rule=rule,
-        rule_text=rule["file"].read_text(encoding="utf-8"),
+        rule_text=extraction.effective_rule_text(rule["file"]),
         source_pages=set(),
         section_markdown="",
         table_cache={},
@@ -237,7 +242,7 @@ def test_industry_total_accepts_located_metrics_without_row_bbox(monkeypatch):
     assert result["rows"][0]["row_evidence"]["status"] == "QUOTE_ONLY"
 
 
-def test_known_source_row_with_unknown_optional_key_is_preserved_without_structure_failure(monkeypatch):
+def test_source_backed_asset_row_keeps_generated_semantic_key_without_static_registry(monkeypatch):
     rule = next(item for item in MODULE_RULES if item["rule_id"] == "investment.asset_allocation")
     monkeypatch.setattr(extraction, "_verify_field", lambda *args, **kwargs: {
         "raw_text": "-", "normalized_value": None, "value_kind": "DASH", "unit": "元",
@@ -251,13 +256,13 @@ def test_known_source_row_with_unknown_optional_key_is_preserved_without_structu
             "row_key": "unmapped_row", "row_label": "基金投资", "row_page": 1,
             "row_quote": "基金投资 - -", "fields": {"amount": "-", "ratio_of_total_assets": "-"},
         }]},
-        rule=rule, rule_text=rule["file"].read_text(encoding="utf-8"), source_pages=set(),
+        rule=rule, rule_text=extraction.effective_rule_text(rule["file"]), source_pages=set(),
         section_markdown="", table_cache={}, header_maps={},
     )
 
     assert result["status"] == "EXTRACTED"
     assert result["rows"][0]["label"] == "基金投资"
-    assert result["rows"][0]["row_key"] == ""
+    assert result["rows"][0]["row_key"] == "unmapped_row"
 
 
 def test_verified_no_data_disclosure_is_valid_without_table_rows():
@@ -269,7 +274,7 @@ def test_verified_no_data_disclosure_is_valid_without_table_rows():
             "status": "NO_DATA", "period_end": "2025-12-31",
             "scope": {"portfolio": "equity holdings"}, "page": 8, "quote": quote,
         }]},
-        rule=rule, rule_text=rule["file"].read_text(encoding="utf-8"),
+        rule=rule, rule_text=extraction.effective_rule_text(rule["file"]),
         source_pages={8}, section_markdown=quote, table_cache={}, header_maps={},
     )
     assert result["status"] == "EXTRACTED"
@@ -285,7 +290,7 @@ def test_unverifiable_no_data_disclosure_does_not_clear_review_state():
             "status": "NO_DATA", "period_end": "2025-12-31",
             "scope": {"portfolio": "equity holdings"}, "page": 8, "quote": "没有持仓",
         }]},
-        rule=rule, rule_text=rule["file"].read_text(encoding="utf-8"),
+        rule=rule, rule_text=extraction.effective_rule_text(rule["file"]),
         source_pages={8}, section_markdown="这是有数据的章节。", table_cache={}, header_maps={},
     )
     assert result["status"] == "UNRESOLVED_STRUCTURE"
@@ -317,7 +322,7 @@ def test_invalid_table_row_reference_recovers_only_unique_mapped_cell():
 
 
 def test_cross_page_section_keeps_subheadings_until_next_peer_module():
-    rules = {rule["rule_id"]: rule["file"].read_text(encoding="utf-8") for rule in MODULE_RULES}
+    rules = {rule["rule_id"]: extraction.effective_rule_text(rule["file"]) for rule in MODULE_RULES}
     markdown = """5.1 报告期末基金资产组合情况
 |权益投资|100|50|
 5.2 报告期末按行业分类的股票投资组合
@@ -352,7 +357,7 @@ def test_anydoc_page_footer_includes_following_physical_continuation_page():
 
 def test_chapter_context_aggregates_multi_page_content_and_keeps_page_sources():
     rule = next(item for item in MODULE_RULES if item["rule_id"] == "investment.asset_allocation")
-    rule_texts = {rule["rule_id"]: rule["file"].read_text(encoding="utf-8")}
+    rule_texts = {rule["rule_id"]: extraction.effective_rule_text(rule["file"])}
     pages = [
         {
             "page": 1,
@@ -387,7 +392,7 @@ def test_chapter_context_aggregates_multi_page_content_and_keeps_page_sources():
 
 
 def test_anydoc_section_prefers_body_over_contents_and_stops_at_next_peer_heading():
-    rules = {rule["rule_id"]: rule["file"].read_text(encoding="utf-8") for rule in MODULE_RULES}
+    rules = {rule["rule_id"]: extraction.effective_rule_text(rule["file"]) for rule in MODULE_RULES}
     markdown = """目录
 5.3 期末按公允价值占基金资产净值比例大小排序的股票投资明细 ........ 56
 正文
@@ -436,7 +441,7 @@ def test_table_cell_evidence_can_validate_a_quote_that_skips_an_intervening_cell
     pdf_path = Path("assets/易方达上证50交易型开放式指数证券投资基金更新的招募说明书.pdf")
     document, pages = extraction._read_pdf(pdf_path.read_bytes(), pdf_path.name)
     rule = next(item for item in MODULE_RULES if item["rule_id"] == "investment.industry_stock_portfolio")
-    rule_text = Path(rule["file"]).read_text(encoding="utf-8")
+    rule_text = extraction.effective_rule_text(Path(rule["file"]))
     table_cache = extraction._collect_tables(document, {55})
     header_maps = extraction._header_column_maps(
         table_cache,
@@ -494,7 +499,7 @@ def test_table_row_evidence_uses_unique_structured_row_when_quote_is_reordered()
             [82.82, 381.05, 522.12, 422.33],
         ),
     ]
-    rule_texts = {rule["rule_id"]: Path(rule["file"]).read_text(encoding="utf-8") for rule in MODULE_RULES}
+    rule_texts = {rule["rule_id"]: extraction.effective_rule_text(Path(rule["file"])) for rule in MODULE_RULES}
 
     for pdf, page_number, rule_id, row_label, quote, expected_bbox in cases:
         path = Path(pdf)

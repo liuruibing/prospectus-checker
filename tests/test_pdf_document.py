@@ -59,7 +59,8 @@ def test_complete_cross_page_allocation_reaches_existing_extraction_catalogue(tm
     path = Path("assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-08-30_2025年中期报告.pdf")
     content = path.read_bytes()
     package = verified_conversion(content, tmp_path)
-    texts = {r["rule_id"]: r["file"].read_text() for r in MODULE_RULES}
+    from app.rule_compiler import effective_rule_text
+    texts = {r["rule_id"]: effective_rule_text(r["file"]) for r in MODULE_RULES}
     document, pages = extraction._read_pdf(content, path.name)
     try:
         contexts = extraction._chapter_contexts(extraction._anydoc_sections(package["reader_markdown"], texts), pages, texts)

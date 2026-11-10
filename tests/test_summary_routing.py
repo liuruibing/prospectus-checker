@@ -427,14 +427,28 @@ def test_group_context_shares_sources_and_tables_but_retains_each_items_scope():
     assert len(packed["context_pool"]["logical_units"]) == 1
     assert packed["items"][0]["allowed_summary_source_ids"] == ["shared"]
     assert packed["items"][1]["allowed_summary_source_ids"] == ["shared", "extra"]
+    assert packed["context_pool"]["sources"]["shared"]["source_id"] == "shared"
+    assert packed["context_pool"]["sources"]["extra"]["source_id"] == "extra"
     assert "summary_candidates" not in packed["items"][0]
     assert len(summary._payload_batches(items, budget=20_000)) == 1
     assert summary._json_size(packed) < summary._json_size({"items": items}) / 4
 
 
 def test_rule_loader_rejects_invalid_role_hints(tmp_path):
-    text = (Path(summary.__file__).resolve().parents[1] / "rules/product_summary/manager.md").read_text()
-    text = text.replace('section_hints_by_role = {', 'section_hints_by_role = "bad"\nignored = {', 1)
+    text = '''+++
+item_id = "test_rule"
+module_id = "profile"
+label = "测试规则"
+value_type = "text"
+period_policy = "current_identity"
+unit_policy = "preserve_source_unit"
+comparison_policy = "semantic_with_identity_and_scope"
+primary_source = { role = "periodic_report" }
+section_hints_by_role = "bad"
++++
+
+测试业务说明。
+'''
     (tmp_path / "rule.md").write_text(text)
     with pytest.raises(RuleLoadError, match="section_hints_by_role"):
         load_markdown_rules(tmp_path)

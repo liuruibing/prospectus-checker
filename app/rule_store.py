@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from app.summary_rules import load_markdown_rules
+from app.rule_compiler import _is_plain_chinese_rule, load_compiled_rule
 
 
 RULE_ROOT = Path(__file__).resolve().parents[1] / "rules"
@@ -104,6 +105,25 @@ def get_rule(scope: str, filename: str) -> dict[str, Any]:
 def _validate_summary_rules(scope: str, filename: str, content: str) -> None:
     if scope != "product_summary":
         return
+    if _is_plain_chinese_rule(content):
+        path = _rule_path(scope, filename)
+        compiled = load_compiled_rule(path, content)
+        if compiled is None:
+            raise ValueError("中文规则尚未生成可用的执行版本")
+        with tempfile.TemporaryDirectory(prefix="summary-rules-") as temp:
+            temp_dir = Path(temp)
+            for existing in _scope_dir(scope).glob("*.md"):
+                if existing.name == filename:
+                    (temp_dir / filename).write_text(compiled, encoding="utf-8")
+                    continue
+                current = existing.read_text(encoding="utf-8")
+                effective = load_compiled_rule(existing, current) if _is_plain_chinese_rule(current) else current
+                (temp_dir / existing.name).write_text(effective or current, encoding="utf-8")
+            try:
+                load_markdown_rules(temp_dir)
+            except (ValueError, OSError) as exc:
+                raise ValueError(f"生成的规则集无效：{exc}") from exc
+        return
     with tempfile.TemporaryDirectory(prefix="summary-rules-") as temp:
         temp_dir = Path(temp)
         for path in _scope_dir(scope).glob("*.md"):
@@ -129,6 +149,10 @@ def save_rule(scope: str, filename: str, content: str, expected_sha256: str) -> 
     current_sha256 = _file_hash(current)
     if current_sha256 != expected_sha256:
         raise RuleConflictError("文件已被其他操作更新，请重新载入后再保存")
+    if _is_plain_chinese_rule(content):
+        compiled = load_compiled_rule(path, content)
+        if compiled is None:
+            raise ValueError("中文规则尚未生成可用的执行版本")
     _validate_summary_rules(scope, filename, content)
 
     original_mode = stat.S_IMODE(path.stat().st_mode)

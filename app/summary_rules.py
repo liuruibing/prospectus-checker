@@ -12,8 +12,18 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from app.rule_compiler import load_compiled_rule, _is_plain_chinese_rule
+
 
 RULE_DIR = Path(__file__).resolve().parents[1] / "rules" / "product_summary"
+ALLOWED_VALUE_TYPES = {"amount", "date", "annual_rate", "code", "text"}
+ALLOWED_PERIOD_POLICIES = {"same_period", "current_identity", "applicable_at_summary_compilation"}
+ALLOWED_UNIT_POLICIES = {"same_currency_amount_and_period", "annual_rate", "preserve_source_unit"}
+ALLOWED_COMPARISON_POLICIES = {"role_aware_identifier", "normalized_numeric", "semantic_with_identity_and_scope"}
+ALLOWED_FALLBACK_CONDITIONS = {
+    "primary_confirmed_absent", "primary_not_applicable", "same_contract_annual_rate",
+    "same_period_same_nature_amount",
+}
 REQUIRED_METADATA = {
     "item_id", "module_id", "label", "value_type", "primary_source",
     "period_policy", "unit_policy", "comparison_policy",
@@ -26,6 +36,11 @@ class RuleLoadError(ValueError):
 
 def _parse_document(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
+    if _is_plain_chinese_rule(text):
+        compiled = load_compiled_rule(path, text)
+        if compiled is None:
+            raise RuleLoadError(f"{path.name}: Chinese business rule has no compiled runtime plan")
+        text = compiled
     lines = text.splitlines()
     if not lines or lines[0].strip() != "+++":
         raise RuleLoadError(f"{path.name}: expected TOML front matter beginning with +++")
@@ -52,6 +67,10 @@ def _parse_document(path: Path) -> dict[str, Any]:
     primary_source = metadata["primary_source"]
     if not isinstance(primary_source, dict) or not isinstance(primary_source.get("role"), str):
         raise RuleLoadError(f"{path.name}: primary_source.role is required")
+    if primary_source["role"] != "periodic_report":
+        raise RuleLoadError(f"{path.name}: unsupported primary source role")
+    if any(value not in {"quarterly", "interim", "annual"} for value in primary_source.get("subtypes", [])):
+        raise RuleLoadError(f"{path.name}: unsupported periodic report subtype")
     fallback = metadata.get("fallback_source")
     if fallback is not None and (not isinstance(fallback, dict) or not isinstance(fallback.get("role"), str)):
         raise RuleLoadError(f"{path.name}: fallback_source.role must be a string")
@@ -59,6 +78,17 @@ def _parse_document(path: Path) -> dict[str, Any]:
         values = metadata.get(list_key, [])
         if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
             raise RuleLoadError(f"{path.name}: {list_key} must be an array of strings")
+    unsupported_fallbacks = set(metadata.get("fallback_when", [])) - ALLOWED_FALLBACK_CONDITIONS
+    if unsupported_fallbacks:
+        raise RuleLoadError(f"{path.name}: unsupported fallback conditions: {', '.join(sorted(unsupported_fallbacks))}")
+    for key, allowed in (
+        ("value_type", ALLOWED_VALUE_TYPES),
+        ("period_policy", ALLOWED_PERIOD_POLICIES),
+        ("unit_policy", ALLOWED_UNIT_POLICIES),
+        ("comparison_policy", ALLOWED_COMPARISON_POLICIES),
+    ):
+        if metadata.get(key) not in allowed:
+            raise RuleLoadError(f"{path.name}: unsupported {key}: {metadata.get(key)!r}")
     role_hints = metadata.get("section_hints_by_role", {})
     if not isinstance(role_hints, dict) or any(
         not isinstance(role, str) or not isinstance(hints, list)

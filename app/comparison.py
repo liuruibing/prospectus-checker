@@ -140,7 +140,8 @@ def _row_key(module_id: str, row: dict[str, Any], counts: dict[str, int]) -> tup
     if module_id == "investment.asset_allocation":
         key = str(row.get("row_key") or "").strip()
         if key:
-            return f"{row.get('parent_key') or ''}/{key}", True
+            identity = f"{row.get('parent_key') or ''}/{key}"
+            return identity, counts.get(f"semantic:{identity}", 0) == 1
         label = normalize_text(row.get("label"))
         fallback = f"{row.get('parent_key') or ''}/{label}"
         return (f"unmapped:{fallback}", counts.get(f"unmapped:{fallback}", 0) == 1) if label else (None, False)
@@ -169,6 +170,10 @@ def _row_index(module_id: str, rows: list[dict[str, Any]]) -> tuple[dict[str, di
     counts: dict[str, int] = {}
     for row in rows:
         if module_id == "investment.asset_allocation":
+            row_key = str(row.get("row_key") or "").strip()
+            if row_key:
+                identity = f"{row.get('parent_key') or ''}/{row_key}"
+                counts[f"semantic:{identity}"] = counts.get(f"semantic:{identity}", 0) + 1
             label = normalize_text(row.get("label"))
             if label:
                 identity = f"{row.get('parent_key') or ''}/{label}"
@@ -197,6 +202,70 @@ def _row_index(module_id: str, rows: list[dict[str, Any]]) -> tuple[dict[str, di
             continue
         result[key] = row
     return result, unresolved
+
+
+def _align_asset_rows(left_rows: list[dict], right_rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Use unique source labels as a conservative fallback for model key drift."""
+    left, right = ([dict(row) for row in rows] for rows in (left_rows, right_rows))
+    sides = (left, right)
+    parent_maps = []
+    semantic_parent_keys = []
+    for rows in sides:
+        keyed: dict[str, list[dict]] = {}
+        labels: dict[str, list[dict]] = {}
+        for row in rows:
+            key = str(row.get("row_key") or "").strip()
+            label = normalize_text(row.get("label"))
+            if key:
+                keyed.setdefault(key, []).append(row)
+            if label:
+                labels.setdefault(label, []).append(row)
+        parent_maps.append((keyed, labels))
+        semantic_parent_keys.append(set(keyed))
+    shared_keys = semantic_parent_keys[0] & semantic_parent_keys[1]
+    shared_labels = set(parent_maps[0][1]) & set(parent_maps[1][1])
+    parent_tokens = []
+    for side_index, rows in enumerate(sides):
+        keyed, labels = parent_maps[side_index]
+        tokens = {}
+        for key, parents in keyed.items():
+            if len(parents) == 1:
+                label = normalize_text(parents[0].get("label"))
+                if key in shared_keys:
+                    tokens[key] = f"semantic:{key}"
+                elif label in shared_labels and len(parent_maps[1 - side_index][1].get(label, [])) == 1:
+                    tokens[key] = f"label:{label}"
+        parent_tokens.append(tokens)
+    for side_index, rows in enumerate(sides):
+        tokens = parent_tokens[side_index]
+        for row in rows:
+            parent_key = str(row.get("parent_key") or "").strip()
+            if parent_key in tokens:
+                row["parent_key"] = tokens[parent_key]
+
+    indexes = []
+    for rows in sides:
+        index: dict[tuple[str, str], list[dict]] = {}
+        for row in rows:
+            label = normalize_text(row.get("label"))
+            parent = str(row.get("parent_key") or "")
+            if label:
+                index.setdefault((parent, label), []).append(row)
+        indexes.append(index)
+    for identity in set(indexes[0]) & set(indexes[1]):
+        first, second = indexes[0][identity], indexes[1][identity]
+        if len(first) != 1 or len(second) != 1:
+            for row in (*first, *second):
+                row["schema_warnings"] = [*row.get("schema_warnings", []), "ambiguous_source_label"]
+            continue
+        row_a, row_b = first[0], second[0]
+        key_a = str(row_a.get("row_key") or "").strip()
+        key_b = str(row_b.get("row_key") or "").strip()
+        if key_a != key_b:
+            shared = f"source-label:{identity[0]}/{identity[1]}"
+            row_a["row_key"] = shared
+            row_b["row_key"] = shared
+    return left, right
 
 
 def _align_stock_markets(left_rows: list[dict], right_rows: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -301,29 +370,28 @@ def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[st
                 "periodic_rows": [],
             }
     disclosure_ranges = None
+    stock_target_coverage_confirmed = True
     if module_id == "investment.stock_holdings":
         left_coverage, right_coverage = _holdings_coverage(left_module), _holdings_coverage(right_module)
-        if not _reference_covers_target_coverage(left_coverage, right_coverage):
-            return {
-                "rule_id": module_id, "title": title, "status": "UNRESOLVED_STRUCTURE", "differences": [],
-                "review_message": "定期报告披露范围不足以覆盖招募说明书中的核对项目，暂不判定证券单侧缺失。",
-                "prospectus_rows": left_rows, "periodic_rows": right_rows,
-                "disclosure_ranges": {"prospectus": left_coverage, "periodic_report": right_coverage},
-            }
+        stock_target_coverage_confirmed = _reference_covers_target_coverage(left_coverage, right_coverage)
         disclosure_ranges = {"prospectus": left_coverage, "periodic_report": right_coverage}
         left_rows, right_rows = _align_stock_markets(left_rows, right_rows)
-        if left_coverage and left_coverage[0] == "top_n":
-            # The prospectus defines the requested comparison set. Ignore report-only
-            # securities while retaining all report rows for any prospectus security.
-            target_codes = {
-                normalize_stock_code(row.get("stock_code"))
-                for row in left_rows
-                if normalize_stock_code(row.get("stock_code"))
-            }
+        # The prospectus defines the requested comparison set. Compare every
+        # target security that can be identified in the report, even when the
+        # chapter contains multiple sub-tables and its aggregate scope is unknown.
+        # Report-only securities are outside the requested comparison set.
+        target_codes = {
+            normalize_stock_code(row.get("stock_code"))
+            for row in left_rows
+            if normalize_stock_code(row.get("stock_code"))
+        }
+        if target_codes:
             right_rows = [
                 row for row in right_rows
                 if normalize_stock_code(row.get("stock_code")) in target_codes
             ]
+    if module_id == "investment.asset_allocation":
+        left_rows, right_rows = _align_asset_rows(left_rows, right_rows)
     schema_issue = any(row.get("schema_warnings") for row in (*left_rows, *right_rows))
     if schema_issue:
         return {
@@ -353,6 +421,9 @@ def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[st
         if left_row is None or right_row is None:
             present_row = left_row or right_row
             if _row_has_only_empty_metrics(module_id, present_row):
+                continue
+            if module_id == "investment.stock_holdings" and left_row is not None and not stock_target_coverage_confirmed:
+                unresolved = True
                 continue
             if unresolved:
                 continue
@@ -416,6 +487,19 @@ def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[st
         )
     if identity_unresolved:
         completeness_messages.append("部分行身份不足以唯一匹配，系统未将其判为单侧出现。")
+    if module_id == "investment.stock_holdings" and not stock_target_coverage_confirmed:
+        target_codes = {
+            normalize_stock_code(row.get("stock_code"))
+            for row in left_rows
+            if normalize_stock_code(row.get("stock_code"))
+        }
+        report_codes = {
+            normalize_stock_code(row.get("stock_code"))
+            for row in right_rows
+            if normalize_stock_code(row.get("stock_code"))
+        }
+        if target_codes - report_codes:
+            completeness_messages.append("定期报告披露范围或对应证券证据不足，无法确认招募说明书中未匹配证券是否确实缺失。")
     if completeness_messages:
         review_message = " ".join(completeness_messages)
     return {

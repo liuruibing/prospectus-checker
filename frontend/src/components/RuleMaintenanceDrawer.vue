@@ -34,7 +34,7 @@
                 @click="selectRule(rule)"
               >
                 <i class="el-icon-document" aria-hidden="true" />
-                <span class="rule-nav-copy"><strong>{{ rule.title }}</strong><small>{{ rule.filename }}</small></span>
+                <span class="rule-nav-copy"><strong>{{ rule.title }}</strong></span>
                 <i v-if="isActive(rule)" class="el-icon-arrow-right rule-nav-arrow" aria-hidden="true" />
               </button>
             </section>
@@ -46,7 +46,7 @@
           <template v-if="activeRule">
             <div class="rule-editor-toolbar">
               <div class="rule-editor-file">
-                <div class="rule-editor-breadcrumb"><span>{{ activeRule.scope_label }}</span><i class="el-icon-arrow-right" /><code>{{ activeRule.filename }}</code></div>
+                <div class="rule-editor-breadcrumb"><span>{{ activeRule.scope_label }}</span></div>
                 <strong>{{ activeRule.title }}</strong>
               </div>
               <div class="rule-editor-actions">
@@ -60,37 +60,36 @@
             </div>
             <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="rule-editor-error" />
             <div v-if="!editing" class="rule-preview-content" v-loading="loadingRule">
-              <div class="rule-preview-toolbar"><span>规则内容</span><small>{{ activeRule.filename }}</small></div>
-              <div v-if="previewMetadata.length" class="rule-preview-metadata">
-                <div v-for="item in previewMetadata" :key="item.label" class="rule-preview-meta-item">
-                  <small>{{ item.label }}</small><strong>{{ item.value }}</strong>
-                </div>
-              </div>
+              <div class="rule-preview-toolbar"><span>规则内容</span></div>
               <article class="rule-markdown-preview" v-html="renderedMarkdown" />
-              <el-collapse v-if="ruleFrontmatter" class="rule-frontmatter-collapse">
-                <el-collapse-item title="查看规则参数" name="frontmatter">
-                  <pre>{{ ruleFrontmatter }}</pre>
-                </el-collapse-item>
-              </el-collapse>
             </div>
             <template v-else>
-              <div class="rule-editor-hint"><span><i class="el-icon-edit-outline" /> Markdown 编辑器</span><small>修改后保存，新建核对任务将使用最新规则</small></div>
-              <div class="rule-editor-content" v-loading="loadingRule">
-                <textarea
-                  v-model="draft"
-                  class="rule-markdown-input"
-                  aria-label="规则 Markdown 内容"
-                  spellcheck="false"
-                  :disabled="loadingRule || saving"
-                  @keydown="handleShortcut"
-                />
+              <div class="rule-editor-hint"><span><i class="el-icon-edit-outline" />编辑业务规则</span><small>新建核对任务将使用保存后的规则</small></div>
+              <div class="rule-editor-content rule-section-editor" v-loading="loadingRule">
+                <label class="rule-title-field">
+                  <span>规则名称</span>
+                  <el-input v-model="draftTitle" :disabled="loadingRule || saving" />
+                </label>
+                <section v-for="(section, index) in draftSections" :key="`${activeRule.filename}-${index}`" class="rule-section-field">
+                  <h3>{{ section.title }}</h3>
+                  <el-input
+                    v-model="section.content"
+                    type="textarea"
+                    :rows="sectionRows(section.content)"
+                    resize="vertical"
+                    :disabled="loadingRule || saving"
+                    :aria-label="section.title"
+                    placeholder="填写这一部分的核对要求"
+                    @keydown.native="handleShortcut"
+                  />
+                </section>
               </div>
             </template>
             <footer class="rule-editor-footer">
               <span v-if="!editing" class="is-preview"><i />预览模式</span>
               <span v-else :class="dirty ? 'is-dirty' : 'is-saved'"><i />{{ dirty ? '尚未保存' : '已保存' }}</span>
               <small v-if="editing && dirty" class="rule-shortcut">⌘/Ctrl + S 保存</small>
-              <span>{{ draft.length.toLocaleString() }} 字符</span>
+              <span>{{ serializeDraft().length.toLocaleString() }} 字符</span>
             </footer>
           </template>
           <el-empty v-else-if="!loading" :image-size="72" description="选择一个规则文件开始维护" />
@@ -108,7 +107,7 @@ export default {
   props: { visible: { type: Boolean, default: false } },
   data() {
     return {
-      rules: [], activeRule: null, draft: "", savedContent: "", expectedSha256: "", query: "", editing: false,
+      rules: [], activeRule: null, draftTitle: "", draftSections: [], savedContent: "", expectedSha256: "", query: "", editing: false,
       loading: false, loadingRule: false, saving: false, error: "", viewportWidth: window.innerWidth,
     };
   },
@@ -118,7 +117,7 @@ export default {
       set(value) { this.$emit("update:visible", value); },
     },
     drawerSize() { return this.viewportWidth < 760 ? "100%" : "1080px"; },
-    dirty() { return !!this.activeRule && this.draft !== this.savedContent; },
+    dirty() { return !!this.activeRule && this.serializeDraft() !== this.savedContent; },
     visibleGroups() {
       const needle = this.query.trim().toLocaleLowerCase();
       const groups = new Map();
@@ -130,30 +129,9 @@ export default {
       return Array.from(groups.values());
     },
     filteredRuleCount() { return this.visibleGroups.reduce((count, group) => count + group.rules.length, 0); },
-    ruleFrontmatter() {
-      const content = this.activeRule && this.activeRule.content || "";
-      const match = content.match(/^\+\+\+\s*\r?\n([\s\S]*?)\r?\n\+\+\+\s*(?:\r?\n|$)/);
-      return match ? match[1].trim() : "";
-    },
     markdownBody() {
       const content = this.activeRule && this.activeRule.content || "";
       return content.replace(/^\+\+\+\s*\r?\n[\s\S]*?\r?\n\+\+\+\s*(?:\r?\n|$)/, "").trim();
-    },
-    previewMetadata() {
-      if (!this.ruleFrontmatter) return [];
-      const read = (key) => {
-        const match = this.ruleFrontmatter.match(new RegExp(`^${key}\\s*=\\s*['\"]([^'\"]+)['\"]`, "m"));
-        return match ? match[1] : "";
-      };
-      const sourceName = (role) => ({ periodic_report: "定期报告", prospectus: "招募说明书" }[role] || role);
-      const primary = this.ruleFrontmatter.match(/primary_source\s*=\s*\{[^}]*role\s*=\s*["']([^"']+)["']/);
-      const fallback = this.ruleFrontmatter.match(/fallback_source\s*=\s*\{[^}]*role\s*=\s*["']([^"']+)["']/);
-      return [
-        { label: "规则标识", value: read("item_id") },
-        { label: "所属模块", value: read("module_id") },
-        { label: "主核验来源", value: primary ? sourceName(primary[1]) : "按规则正文说明" },
-        { label: "补充来源", value: fallback ? sourceName(fallback[1]) : "未配置" },
-      ].filter((item) => item.value);
     },
     renderedMarkdown() { return this.renderMarkdown(this.markdownBody); },
   },
@@ -175,7 +153,7 @@ export default {
           ? this.rules.find((rule) => rule.scope === preferred.scope && rule.filename === preferred.filename)
           : this.rules.find((rule) => this.isActive(rule)) || this.rules[0];
         if (next) await this.fetchRule(next);
-        else { this.activeRule = null; this.draft = this.savedContent = ""; }
+        else { this.activeRule = null; this.draftTitle = ""; this.draftSections = []; this.savedContent = ""; }
       } catch (error) {
         this.error = this.errorText(error, "无法读取规则目录。");
       } finally { this.loading = false; }
@@ -186,7 +164,8 @@ export default {
       try {
         const response = await axios.get(`/api/rules/${encodeURIComponent(rule.scope)}/${encodeURIComponent(rule.filename)}`);
         this.activeRule = response.data;
-        this.draft = this.savedContent = response.data.content;
+        this.savedContent = response.data.content;
+        this.setDraft(response.data.content);
         this.expectedSha256 = response.data.sha256;
         this.editing = false;
       } catch (error) {
@@ -216,7 +195,7 @@ export default {
         try { await this.$confirm("放弃尚未保存的修改？", "取消编辑", { confirmButtonText: "放弃修改", cancelButtonText: "继续编辑", type: "warning" }); }
         catch (_) { return; }
       }
-      this.draft = this.savedContent;
+      this.setDraft(this.savedContent);
       this.error = "";
       this.editing = false;
     },
@@ -228,10 +207,11 @@ export default {
       try {
         const response = await axios.put(
           `/api/rules/${encodeURIComponent(this.activeRule.scope)}/${encodeURIComponent(this.activeRule.filename)}`,
-          { content: this.draft, expected_sha256: this.expectedSha256 },
+          { content: this.serializeDraft(), expected_sha256: this.expectedSha256 },
         );
         this.activeRule = response.data;
-        this.draft = this.savedContent = response.data.content;
+        this.savedContent = response.data.content;
+        this.setDraft(response.data.content);
         this.expectedSha256 = response.data.sha256;
         this.editing = false;
         const index = this.rules.findIndex((rule) => this.isActive(rule));
@@ -257,6 +237,34 @@ export default {
         this.saveRule();
       }
     },
+    parseRule(content) {
+      const body = (content || "").replace(/^\+\+\+\s*\r?\n[\s\S]*?\r?\n\+\+\+\s*(?:\r?\n|$)/, "").trim();
+      const lines = body.split(/\r?\n/);
+      const titleIndex = lines.findIndex((line) => /^#\s+/.test(line));
+      const title = titleIndex >= 0 ? lines[titleIndex].replace(/^#\s+/, "").trim() : "";
+      const sections = [];
+      let current = null;
+      for (const line of lines) {
+        const heading = line.match(/^##\s+(.+?)\s*#*$/);
+        if (heading) {
+          current = { title: heading[1].trim(), content: "" };
+          sections.push(current);
+        } else if (current) {
+          current.content += `${current.content ? "\n" : ""}${line}`;
+        }
+      }
+      return { title: title || "规则说明", sections };
+    },
+    setDraft(content) {
+      const parsed = this.parseRule(content);
+      this.draftTitle = parsed.title;
+      this.draftSections = parsed.sections;
+    },
+    serializeDraft() {
+      const sections = this.draftSections.map((section) => `## ${section.title}\n${section.content.trim()}`).join("\n\n");
+      return `# ${this.draftTitle.trim()}\n\n${sections}\n`;
+    },
+    sectionRows(content) { return Math.max(3, Math.min(10, (content || "").split("\n").length + 1)); },
     renderMarkdown(source) {
       const escape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
       const inline = (value) => escape(value)

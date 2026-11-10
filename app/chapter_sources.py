@@ -10,6 +10,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+from app.rule_compiler import effective_rule_text
+
 from app.domain import normalize_numeric, normalize_text
 from app.source_evidence import evidence_source
 
@@ -210,6 +212,98 @@ def render_catalogue(records: dict[str, dict]) -> str:
     ], ensure_ascii=False, separators=(",", ":"))
 
 
+def source_catalogue_batches(
+    context: dict, records: dict[str, dict], tables: dict, max_chars: int,
+) -> list[dict[str, Any]]:
+    """Split a large verified source catalogue into deterministic table-aware batches.
+
+    Every source row appears in exactly one batch. The batch carries its table
+    header and section headings, while row content and provenance remain the
+    original parser output. The size limit is an operational prompt budget, not
+    a business rule.
+    """
+    if not records:
+        return []
+    headings = [line.strip() for line in context.get("section_markdown", "").splitlines()
+                if re.match(r"^#{1,6}\s+\S", line)]
+    common = {"section_headings": headings}
+    grouped: dict[tuple[int, int], list[tuple[str, dict]]] = {}
+    for source_id, record in records.items():
+        source_ref = record.get("source_ref") or {}
+        table_key = (int(record.get("page", 0)), int(source_ref.get("table", 0)))
+        grouped.setdefault(table_key, []).append((source_id, record))
+
+    batches: list[dict[str, Any]] = []
+    for (page, table_index), entries in grouped.items():
+        entries.sort(key=lambda item: int((item[1].get("source_ref") or {}).get("row", 0)))
+        page_tables = tables.get(page, [])
+        table = page_tables[table_index] if table_index < len(page_tables) else {}
+        header_rows = table.get("matrix", [])[:3]
+        header = {"page": page, "table": table_index, "headers": header_rows}
+        current: list[dict] = []
+        current_size = len(json.dumps({**common, "table": header, "rows": []}, ensure_ascii=False))
+        for source_id, record in entries:
+            row = {"source_id": source_id, "page": record["page"], "cells": record["cells"]}
+            row_size = len(json.dumps(row, ensure_ascii=False)) + 1
+            if current and current_size + row_size > max_chars:
+                batches.append({**common, "table": header, "rows": current})
+                current = []
+                current_size = len(json.dumps({**common, "table": header, "rows": []}, ensure_ascii=False))
+            current.append(row)
+            current_size += row_size
+        if current:
+            batches.append({**common, "table": header, "rows": current})
+    return batches
+
+
+def merge_source_batch_modules(modules: list[dict], records: dict[str, dict]) -> dict:
+    """Merge batch classifications without losing exact source coverage."""
+    rows = [row for module in modules for row in module.get("rows", [])]
+    disclosures = []
+    seen_disclosures = set()
+    for module in modules:
+        for claim in module.get("disclosures", []) or []:
+            marker = json.dumps(claim, ensure_ascii=False, sort_keys=True)
+            if marker not in seen_disclosures:
+                seen_disclosures.add(marker)
+                disclosures.append(claim)
+    scope_keys = {key for module in modules for key in (module.get("scope") or {})}
+    scope: dict[str, Any] = {}
+    for key in scope_keys:
+        values = [(module.get("scope") or {}).get(key) for module in modules]
+        distinct = {json.dumps(value, ensure_ascii=False, sort_keys=True) for value in values}
+        if len(distinct) == 1:
+            scope[key] = values[0]
+        elif key in {"market_scope", "investment_scope"}:
+            scope[key] = "all" if all(value not in (None, "unknown", "") for value in values) else "unknown"
+        elif key == "disclosure_scope":
+            scope[key] = "all" if "all" in values else "unknown"
+        else:
+            scope[key] = None
+    unique_rows = {}
+    duplicate_ids = set()
+    for row in rows:
+        source_id = row.get("source_id")
+        if source_id in unique_rows:
+            duplicate_ids.add(source_id)
+        else:
+            unique_rows[source_id] = row
+    missing = sorted(set(records) - set(unique_rows))
+    issues = []
+    if missing:
+        issues.append(f"源表有 {len(missing)} 行未被模型确认：{', '.join(missing)}。")
+    if duplicate_ids:
+        issues.append(f"模型重复返回 {len(duplicate_ids)} 个来源行。")
+    return {
+        "found": all(bool(module.get("found")) for module in modules),
+        "scope": scope,
+        "rows": list(unique_rows.values()),
+        "disclosures": disclosures,
+        "source_warnings": issues,
+        "source_coverage": {"expected": len(records), "covered": len(unique_rows), "missing": missing},
+    }
+
+
 def source_gaps(context: dict, records: dict[str, dict], rule: dict) -> list[str]:
     missing = []
     for cells in markdown_rows(context.get("section_markdown", "")):
@@ -226,7 +320,7 @@ def source_gaps(context: dict, records: dict[str, dict], rule: dict) -> list[str
     # so a detached total or continuation row cannot disappear just because it
     # is outside a Markdown pipe table / PyMuPDF table grid.
     rule_path = rule.get("file")
-    rule_text = rule_path.read_text(encoding="utf-8") if isinstance(rule_path, Path) else ""
+    rule_text = effective_rule_text(rule_path) if isinstance(rule_path, Path) else ""
     aliases = []
     in_row_policy = False
     for line in rule_text.splitlines():
@@ -254,6 +348,9 @@ def source_gaps(context: dict, records: dict[str, dict], rule: dict) -> list[str
             continue
         matching_aliases = [alias for alias in aliases if len(normalize_text(alias)) >= 2
                             and normalize_text(alias) in plain]
+        leading_aggregate = re.match(r"^\s*(合计|总计|小计)(?=$|[\s:：\d,，.-])", line_without_footer)
+        if leading_aggregate:
+            matching_aliases.append(leading_aggregate.group(1))
         numeric_count = sum(
             normalize_numeric(token)["kind"] in {"NUMBER", "DASH"}
             for token in re.findall(r"(?<![\w])(?:[-—–－]|\d[\d,，]*(?:\.\d+)?%?)(?![\w])", line_without_footer)

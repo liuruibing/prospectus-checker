@@ -4,12 +4,12 @@ import asyncio
 from pathlib import Path
 
 from app import extraction
-from app.chapter_sources import ChapterCache, bind_sources, resolve_data_columns, source_catalogue, source_gaps
+from app.chapter_sources import ChapterCache, bind_sources, merge_source_batch_modules, resolve_data_columns, source_catalogue, source_catalogue_batches, source_gaps
 from app.domain import MODULE_RULES
 
 
 def test_cross_page_chapters_cover_all_real_source_rows():
-    rule_texts = {rule["rule_id"]: rule["file"].read_text(encoding="utf-8") for rule in MODULE_RULES}
+    rule_texts = {rule["rule_id"]: extraction.effective_rule_text(rule["file"]) for rule in MODULE_RULES}
     from app.pdf_document import page_tables, verified_conversion
 
     for filename, expected_pages in [
@@ -71,6 +71,39 @@ def test_source_binding_rejects_missing_duplicate_and_foreign_rows_and_preserves
     assert bound["source_warnings"]
 
 
+def test_large_source_catalogue_batches_preserve_headers_headings_and_exact_coverage():
+    records = {
+        f"id-{index}": {"source_id": f"id-{index}", "page": 4,
+                        "source_ref": {"table": 0, "row": index + 1},
+                        "cells": [str(index), f"证券{index}"]}
+        for index in range(7)
+    }
+    context = {"section_markdown": "## 投资组合\n### 指数投资\n<table></table>"}
+    tables = {4: [{"matrix": [["序号", "名称"], *[[str(i), f"证券{i}"] for i in range(7)]]}]}
+
+    batches = source_catalogue_batches(context, records, tables, max_chars=180)
+
+    assert len(batches) > 1
+    assert [row["source_id"] for batch in batches for row in batch["rows"]] == list(records)
+    assert all(batch["section_headings"] == ["## 投资组合", "### 指数投资"] for batch in batches)
+    assert all(batch["table"]["headers"] == [["序号", "名称"], ["0", "证券0"], ["1", "证券1"]]
+               for batch in batches)
+
+
+def test_batch_merge_marks_missing_source_rows_and_merges_scope_conservatively():
+    records = {"a": {}, "b": {}, "c": {}}
+    merged = merge_source_batch_modules([
+        {"found": True, "scope": {"market_scope": "domestic", "investment_scope": "index"},
+         "rows": [{"source_id": "a"}, {"source_id": "b"}]},
+        {"found": True, "scope": {"market_scope": "hk_connect", "investment_scope": "active"},
+         "rows": [{"source_id": "b"}]},
+    ], records)
+
+    assert merged["scope"] == {"market_scope": "all", "investment_scope": "all"}
+    assert merged["source_coverage"] == {"expected": 3, "covered": 2, "missing": ["c"]}
+    assert len(merged["source_warnings"]) == 2
+
+
 def test_source_gaps_detects_rule_named_plain_text_continuation_row():
     rule = MODULE_RULES[0]
     context = {"section_markdown": "|8|其他各项资产|10|1|\n第 44 页 共 65 页\n合计 110 100 注：表格口径说明。"}
@@ -128,7 +161,7 @@ def test_headerless_continuation_inherits_column_centers_across_different_grid_c
         "cells_by_row": [[[76, 0, 117, 20], [117, 0, 208, 20], [208, 0, 369, 20], [369, 0, 519, 20]]],
         "page_width": 595,
     }
-    rules = {rule["rule_id"]: extraction._header_aliases(rule["file"].read_text(encoding="utf-8"))}
+    rules = {rule["rule_id"]: extraction._header_aliases(extraction.effective_rule_text(rule["file"]))}
     maps = extraction._header_column_maps({1: [previous], 2: [continued]}, rules, column_tolerance=0.02)
 
     inherited = maps[rule["rule_id"]][2][0]
@@ -176,7 +209,7 @@ def test_invalid_json_retries_only_the_failed_chapter():
     provider = Provider()
     result = asyncio.run(extraction._extract_chapters(
         "sample.pdf", "periodic_report", provider, {}, [],
-        {rule["rule_id"]: rule["file"].read_text() for rule in MODULE_RULES},
+        {rule["rule_id"]: extraction.effective_rule_text(rule["file"]) for rule in MODULE_RULES},
         {}, {}, set(), None, False, "sample", None,
     ))
     assert [provider.calls[rule["rule_id"]] for rule in MODULE_RULES] == [1, 2, 1]

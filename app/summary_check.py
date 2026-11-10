@@ -18,6 +18,7 @@ from app.source_evidence import evidence_source
 from app.source_aliases import SourceAliasProvider
 from app.model_json import read_model_json
 from app.summary_rules import load_markdown_rules, module_groups
+from app.rule_compiler import capture_rule_set
 
 
 RULE_CONFIG, RULES = load_markdown_rules()
@@ -36,6 +37,17 @@ for _rule in RULES:
 def _load_rule_snapshot() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Read a consistent rule snapshot when a comparison starts."""
     return load_markdown_rules()
+
+
+def capture_product_summary_rule_snapshot() -> dict[str, Any]:
+    """Freeze the parsed rules and their source/execution version for one task."""
+    config, rules = _load_rule_snapshot()
+    provenance = capture_rule_set("product_summary")
+    return {
+        **provenance,
+        "rule_config": config,
+        "rules": rules,
+    }
 
 
 def _normalize_model_item_id(value: dict[str, Any], row_to_item_id: dict[int, str]) -> dict[str, Any] | None:
@@ -272,6 +284,8 @@ def _fallback_source_date_status(
         return "DATE_UNCONFIRMED", "无法确认补充文件版本在概要编制时已适用。"
     if source[0] > target[1]:
         return "AFTER_TARGET_DATE", "补充文件版本晚于概要编制日期，不能直接作为当时适用依据。"
+    if source == target and source[0] == source[1]:
+        return "DATE_UNCONFIRMED", "补充文件与概要日期相同，无法仅凭日期确认先后或适用关系。"
     # Coarse date precision (for example, a prospectus dated only by month)
     # can overlap the summary's compilation date without proving the source is
     # a later version. Let evidence and field applicability decide; only a
@@ -615,7 +629,11 @@ def _shared_context(items: list[dict[str, Any]]) -> dict[str, Any]:
                 ids = []
                 for source in content:
                     source_id = source["source_id"]
-                    compact_source = {key: value for key, value in source.items() if key != "source_id"}
+                    # Keep the identifier in the shared record as well as its
+                    # map key. Models have repeatedly returned plausible IDs
+                    # from outside the allowed evidence scope when the ID was
+                    # implicit only in a JSON object key.
+                    compact_source = dict(source)
                     if source_id in pools["sources"] and pools["sources"][source_id] != compact_source:
                         raise ValueError("SOURCE_CONTEXT_ID_COLLISION")
                     pools["sources"][source_id] = compact_source
@@ -813,10 +831,17 @@ async def compare_product_summary(
     trace: Callable[[dict[str, Any]], None] | None = None,
     progress: Callable[[str, str, str], None] | None = None,
     historical: bool = True,
+    rule_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Associate fields by business meaning, then validate model citations against PDF sources."""
-    rule_config, rules = _load_rule_snapshot()
-    rule_version = str(rule_config["version"])
+    active_rules = rule_snapshot or capture_product_summary_rule_snapshot()
+    if active_rules.get("scope") != "product_summary":
+        raise ValueError("PRODUCT_SUMMARY_RULE_SNAPSHOT_INVALID")
+    rule_config = active_rules.get("rule_config")
+    rules = active_rules.get("rules")
+    if not isinstance(rule_config, dict) or not isinstance(rules, list):
+        raise ValueError("PRODUCT_SUMMARY_RULE_SNAPSHOT_INVALID")
+    rule_version = str(active_rules["rules_version"])
     for rule in rules:
         rule.setdefault("key", rule["item_id"])
         rule.setdefault("terms", rule.get("search_terms", []))
@@ -834,6 +859,13 @@ async def compare_product_summary(
     provider = SourceAliasProvider(provider, catalogues, trace, request_limit=MODEL_REQUEST_CHARACTERS)
     if trace:
         trace({"kind": "artifact", "path": "rules/product_summary_markdown.json", "content": rule_config})
+        trace({"kind": "artifact", "path": "rules/rule_snapshot.json", "content": {
+            "scope": active_rules.get("scope"),
+            "rules_version": active_rules.get("rules_version"),
+            "protocol_version": active_rules.get("protocol_version"),
+            "prompt_version": active_rules.get("prompt_version"),
+            "files": active_rules.get("files", {}),
+        }})
         if source_catalogues is None:
             for role, catalogue in catalogues.items():
                 trace({"kind": "artifact", "document_role": role, "path": f"{role}/source_catalogue.json", "content": catalogue})
@@ -1469,6 +1501,7 @@ async def compare_product_summary(
             continue
         fallback_prompt = (
             "按每项已验证目标事实及其Markdown规则，在允许的补充文件中查找同一业务字段。same_contract_annual_rate只允许查同一基金合同的年费率；不得把定期报告里已验证的主来源差异替换掉。不得重新提取、改写verified_target的值或source_id。"
+            "当输入含context_pool时，source_id同时作为context_pool.sources的对象键和来源记录字段；返回的source_ids必须逐字复制该项allowed_fallback_source_ids中的一个或多个值，并能在sources中找到。不得沿用对话历史或自行编造ID；无法确认ID时返回UNRESOLVED。"
             "只有补充文件版本日期区间明确晚于概要编制日期区间时，才不得用其形成当时适用结论。日期精度为年月等导致区间相交时，不得仅凭区间相交认定来源无效或强制UNRESOLVED；仍须核对同一产品、字段含义、适用对象、原文证据及是否存在变更提示。若版本明确晚于概要编制日期，只能记录原文证据并将comparison_status设为UNRESOLVED。"
             "候选包含同页bbox坐标。表格标签和值可能分处相邻单元格或不同行，请结合坐标与列关系绑定；必须引用字段标签与对应值的原始source_id。"
             "找到补充来源时返回FOUND和补充值及source_id；字段身份、适用口径或引用不清时返回UNRESOLVED。金额项目仍须给出comparison_basis的same_period、same_nature、same_unit。严格返回JSON："

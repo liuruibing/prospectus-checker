@@ -14,7 +14,18 @@ def test_summary_rule_save_validates_and_persists_latest_content(tmp_path, monke
     root = tmp_path / "rules"
     summary_dir = root / "product_summary"
     summary_dir.mkdir(parents=True)
-    source = Path("rules/product_summary/management_fee.md").read_text(encoding="utf-8")
+    source = '''+++
+item_id = "management_fee"
+module_id = "fees"
+label = "管理费率"
+value_type = "annual_rate"
+primary_source = { role = "periodic_report", subtypes = ["quarterly"] }
+period_policy = "applicable_at_summary_compilation"
+unit_policy = "annual_rate"
+comparison_policy = "normalized_numeric"
++++
+
+核对管理费年费率。\n'''
     path = summary_dir / "management_fee.md"
     path.write_text(source, encoding="utf-8")
     monkeypatch.setattr(rule_store, "RULE_ROOT", root)

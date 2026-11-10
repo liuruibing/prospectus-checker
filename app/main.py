@@ -22,7 +22,14 @@ from app.ai import make_provider
 from app.audit import TaskAuditStore
 from app.runtime import InvestmentComparisonWorkflow, ProductSummaryVerificationWorkflow, WorkflowContext, WorkflowEngine, WorkflowRegistry
 from app.summary_check import RULE_VERSION as SUMMARY_RULE_VERSION
+from app.summary_check import capture_product_summary_rule_snapshot
+from app.extraction import capture_investment_rule_snapshot
+from app.domain import MODULE_RULES
 from app.rule_store import RuleConflictError, get_rule, list_rules, save_rule
+from app.rule_compiler import (
+    RuleCompilationError, _is_plain_chinese_rule, _validate_execution_markdown,
+    compile_rule, load_compiled_rule, persist_compiled_rule,
+)
 from app.versioning import runtime_source_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -115,11 +122,65 @@ async def get_rule_file(scope: str, filename: str) -> dict:
 @app.put("/api/rules/{scope}/{filename}")
 async def update_rule_file(scope: str, filename: str, payload: RuleUpdatePayload) -> dict:
     try:
+        current = get_rule(scope, filename)
+        if current["sha256"] != payload.expected_sha256:
+            raise RuleConflictError("文件已被其他操作更新，请重新载入后再保存")
+        if scope == "investment" and filename.startswith("common_"):
+            public_override = {filename: payload.content}
+            pending_plans = []
+            for module in MODULE_RULES:
+                module_path = Path(module["file"])
+                module_source = module_path.read_text(encoding="utf-8")
+                existing_execution = load_compiled_rule(module_path, module_source) or module_source
+                plan = await compile_rule(
+                    scope=scope, filename=module_path.name, source_content=module_source,
+                    existing_execution=existing_execution, provider=provider,
+                    common_rules=payload.content, public_rule_overrides=public_override,
+                )
+                _validate_execution_markdown(scope, module_path.name, plan["execution_markdown"])
+                pending_plans.append((module_path.name, plan))
+            versions = {plan["public_rules_sha256"] for _, plan in pending_plans}
+            if len(pending_plans) != len(MODULE_RULES) or len(versions) != 1:
+                raise RuleCompilationError("公共规则依赖项未能整体生成同一版本，未激活任何修改。")
+            # Compiled artifacts are staged under the pending public-rule hash.
+            # Saving the common text last switches the complete set atomically.
+            for module_filename, plan in pending_plans:
+                persist_compiled_rule(scope, module_filename, plan)
+            saved = save_rule(scope, filename, payload.content, payload.expected_sha256)
+            saved["execution_version"] = {
+                "protocol": pending_plans[0][1]["protocol_version"],
+                "source_sha256": saved["sha256"],
+                "compiled_rules": len(pending_plans),
+                "compiled_at": max(plan["compiled_at"] for _, plan in pending_plans),
+            }
+            return saved
+        if _is_plain_chinese_rule(payload.content):
+            path = ROOT / "rules" / scope / filename
+            existing_execution = load_compiled_rule(path, current["content"]) if _is_plain_chinese_rule(current["content"]) else current["content"]
+            existing_execution = existing_execution or current["content"]
+            common_path = ROOT / "rules" / scope / "common_公共规则.md"
+            common_rules = common_path.read_text(encoding="utf-8") if common_path.is_file() else ""
+            plan = await compile_rule(
+                scope=scope, filename=filename, source_content=payload.content,
+                existing_execution=existing_execution, provider=provider, common_rules=common_rules,
+            )
+            _validate_execution_markdown(scope, filename, plan["execution_markdown"])
+            persist_compiled_rule(scope, filename, plan)
+            saved = save_rule(scope, filename, payload.content, payload.expected_sha256)
+            saved["execution_version"] = {
+                "protocol": plan["protocol_version"],
+                "source_sha256": plan["source_sha256"],
+                "model": plan["model"],
+                "compiled_at": plan["compiled_at"],
+            }
+            return saved
         return save_rule(scope, filename, payload.content, payload.expected_sha256)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuleConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuleCompilationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (OSError, UnicodeError) as exc:
@@ -174,6 +235,7 @@ async def _prepare_comparison(
     )
     prospectus_name = Path(prospectus.filename or "招募说明书.pdf").name
     periodic_name = Path(periodic_report.filename or "定期报告.pdf").name
+    rule_snapshot = capture_investment_rule_snapshot()
     return WorkflowContext(
         input_val={
             "prospectus_filename": prospectus_name,
@@ -182,6 +244,8 @@ async def _prepare_comparison(
             "periodic_filename": periodic_name,
             "periodic_content": periodic_content,
             "periodic_preview_id": _save_preview(periodic_name, periodic_content),
+            "rule_snapshot": rule_snapshot,
+            "rules_version": rule_snapshot["rules_version"],
         },
         provider=provider,
         run_id=secrets.token_urlsafe(18),
@@ -291,6 +355,15 @@ async def _process_job(job_id: str, workflow_id: str, context: WorkflowContext) 
         started_at=_utc_now(), steps=dict(steps),
     )
     AUDIT_STORE.record_event(job_id, "job_started", {"workflow_id": workflow_id})
+    rule_snapshot = context.input_val.get("rule_snapshot")
+    if isinstance(rule_snapshot, dict) and context.trace_callback:
+        context.trace_callback({"kind": "artifact", "path": "rules/rule_snapshot.json", "content": {
+            "scope": rule_snapshot.get("scope"),
+            "rules_version": rule_snapshot.get("rules_version"),
+            "protocol_version": rule_snapshot.get("protocol_version"),
+            "prompt_version": rule_snapshot.get("prompt_version"),
+            "files": rule_snapshot.get("files", {}),
+        }})
 
     def record_progress(event: dict) -> None:
         if event.get("event") != "workflow.progress":
@@ -385,6 +458,7 @@ async def create_comparison_job(
             "job_id": job_id,
             "run_id": job_id,
             "workflow_id": "prospectus-periodic-comparison",
+            "rules_version": context.input_val["rules_version"],
             "status": "queued",
             "stage": "queued",
             "message": "已加入后台核对队列",
@@ -455,10 +529,12 @@ async def create_product_summary_job(
         stored_docs[role] = (filename, content)
     if "product_summary" not in source_docs or "periodic_report" not in source_docs:
         raise HTTPException(status_code=422, detail="产品资料概要和定期报告为必需文件")
+    rule_snapshot = capture_product_summary_rule_snapshot()
     run_id = secrets.token_urlsafe(18)
     context = WorkflowContext(
         input_val={"documents": source_docs, "input_contract_version": "product-summary-input-v2",
-                   "rules_version": SUMMARY_RULE_VERSION, "result_schema_version": 3,
+                   "rules_version": rule_snapshot["rules_version"], "rule_snapshot": rule_snapshot,
+                   "result_schema_version": 3,
                    "steps": {"preflight": "queued", "source_index": "queued", "primary_lookup": "queued", "fallback_lookup": "queued", "comparison": "queued"}},
         provider=provider, run_id=run_id,
     )
@@ -466,7 +542,7 @@ async def create_product_summary_job(
     steps = dict(context.input_val["steps"])
     job = {
         "job_id": job_id, "run_id": run_id, "workflow_id": "product-summary-verification",
-        "input_contract_version": "product-summary-input-v2", "rules_version": SUMMARY_RULE_VERSION,
+        "input_contract_version": "product-summary-input-v2", "rules_version": rule_snapshot["rules_version"],
         "result_schema_version": 3,
         "status": "queued", "stage": "queued", "message": "已加入后台核对队列",
         "created_at": now, "started_at": None, "updated_at": now, "completed_at": None,
