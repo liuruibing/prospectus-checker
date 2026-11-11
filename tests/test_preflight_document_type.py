@@ -1,6 +1,12 @@
 import pymupdf as fitz
 
-from app.preflight import _document_metadata, _extract_product_name, preflight_documents, preflight_summary_documents
+from app.preflight import (
+    _apply_consistent_batch_fund_names,
+    _document_metadata,
+    _extract_product_name,
+    preflight_documents,
+    preflight_summary_documents,
+)
 
 
 def _pdf_bytes(text: str) -> bytes:
@@ -98,6 +104,104 @@ def test_wrapped_prospectus_title_and_summary_share_class_keep_product_identity(
     from app.preflight import _extract_product_name
     assert _extract_product_name('样本债券型证券投资基金更新的招募\n说明书', 'prospectus') == '样本债券型证券投资基金'
     assert _extract_product_name('样本债券型证券投资基金（C类份额）基金产品资料概要', 'product_summary') == '样本债券型证券投资基金'
+
+
+def test_document_metadata_prefers_full_fund_name_over_short_name():
+    metadata = _document_metadata(
+        "易方达港股通消费混合型证券投资基金2026年第2季度报告.pdf",
+        _pdf_bytes(
+            "2026年第2季度报告\n基金简称\n港股通消费混合\n"
+            "基金代码\n026648\n报告期末：2026年6月30日"
+        ),
+        "auto",
+    )
+
+    assert metadata["fund_name"] == "易方达港股通消费混合型证券投资基金"
+    assert metadata["fund_full_name"] == "易方达港股通消费混合型证券投资基金"
+    assert metadata["fund_short_name"] == "港股通消费混合"
+    assert metadata["fund_code"] == "026648"
+
+
+def test_document_metadata_uses_short_name_only_when_full_name_is_unavailable():
+    metadata = _document_metadata(
+        "2026年第2季度报告.pdf",
+        _pdf_bytes(
+            "2026年第2季度报告\n基金简称\n港股通消费混合\n"
+            "基金代码\n026648\n报告期末：2026年6月30日"
+        ),
+        "auto",
+    )
+
+    assert metadata["fund_name"] == "港股通消费混合"
+
+
+def test_batch_names_use_short_name_when_every_same_fund_document_has_it():
+    documents = [
+        {"fund_code": "026648", "fund_full_name": "易方达港股通消费混合型证券投资基金", "fund_short_name": "港股通消费混合"},
+        {"fund_code": "026648", "fund_full_name": "易方达港股通消费混合型证券投资基金", "fund_short_name": "港股通消费混合"},
+    ]
+
+    _apply_consistent_batch_fund_names(documents)
+
+    assert [document["fund_name"] for document in documents] == ["港股通消费混合", "港股通消费混合"]
+
+
+def test_batch_names_use_full_name_when_short_name_is_not_available_for_all():
+    documents = [
+        {"fund_code": "026648", "fund_full_name": "易方达港股通消费混合型证券投资基金", "fund_short_name": "港股通消费混合"},
+        {"fund_code": "026648", "fund_full_name": "易方达港股通消费混合型证券投资基金", "fund_short_name": None},
+    ]
+
+    _apply_consistent_batch_fund_names(documents)
+
+    assert [document["fund_name"] for document in documents] == [
+        "易方达港股通消费混合型证券投资基金",
+        "易方达港股通消费混合型证券投资基金",
+    ]
+
+
+def test_batch_names_fall_back_to_each_document_name_if_fields_are_incomplete():
+    documents = [
+        {"fund_code": "026648", "fund_full_name": None, "fund_short_name": "港股通消费混合"},
+        {"fund_code": "026648", "fund_full_name": "易方达港股通消费混合型证券投资基金", "fund_short_name": None},
+    ]
+
+    _apply_consistent_batch_fund_names(documents)
+
+    assert [document["fund_name"] for document in documents] == [
+        "港股通消费混合",
+        "易方达港股通消费混合型证券投资基金",
+    ]
+
+
+def test_intake_recognizes_prospectus_when_it_mentions_product_summary():
+    metadata = _document_metadata(
+        "易方达上证50交易型开放式指数证券投资基金更新的招募说明书.pdf",
+        _pdf_bytes(
+            "易方达上证50交易型开放式指数证券投资基金更新的招募说明书\n"
+            "本招募说明书所述产品资料概要是基金销售文件的一部分。\n"
+            "本次更新于2026年1月。"
+        ),
+        "auto",
+    )
+
+    assert metadata["detected_roles"] == ["prospectus"]
+    assert metadata["is_prospectus"] is True
+    assert metadata["is_product_summary"] is False
+
+
+def test_intake_keeps_product_summary_when_it_mentions_prospectus():
+    metadata = _document_metadata(
+        "易方达上证50基金产品资料概要更新.pdf",
+        _pdf_bytes(
+            "易方达上证50交易型开放式指数证券投资基金产品资料概要更新\n"
+            "编制日期：2026年1月26日\n本概要是招募说明书的一部分。"
+        ),
+        "auto",
+    )
+
+    assert metadata["detected_roles"] == ["product_summary"]
+    assert metadata["is_product_summary"] is True
 
 
 def test_periodic_report_distinguishes_report_period_from_short_send_date_label():

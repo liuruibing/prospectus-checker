@@ -87,7 +87,7 @@ def load_markdown_rules(rule_dir: Path = RULE_DIR) -> tuple[dict[str, Any], list
             raise RuleLoadError("display_order must be an integer when configured")
         rules.sort(key=lambda rule: (rule["display_order"], rule["item_id"]))
     config = {
-        "version": "product-summary-md-v1",
+        "version": "product-summary-md-v2",
         "items": rules,
         "modules": sorted({rule["module_id"] for rule in rules}),
     }

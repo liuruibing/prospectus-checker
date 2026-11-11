@@ -13,7 +13,7 @@ primary_source = { role = "periodic_report", subtypes = ["quarterly", "interim",
 fallback_when = []
 period_policy = "current_identity"
 unit_policy = "preserve_source_unit"
-comparison_policy = "semantic_with_identity_and_scope"
+comparison_policy = "composite_exchange_names"
 +++
 
-核对基金的场内简称与扩位证券简称，区分两个名称各自对应的字段，不将其视为可互换的同一标签。以适用定期报告为主，结合交易场所名称披露的上下文确认；关键词只能辅助定位。
+核对基金的场内简称与扩位证券简称。概要中的两个简称合并后，与定期报告“场内简称”字段比较；定期报告可能用顿号、逗号或空格连接两个名称，连接符和字段标签不影响比较。两侧合并后的名称内容相同即判一致。以适用定期报告为主，结合交易场所名称披露的上下文确认；关键词只能辅助定位。

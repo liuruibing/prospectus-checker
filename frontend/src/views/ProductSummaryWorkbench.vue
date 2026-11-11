@@ -1,32 +1,36 @@
 <template>
   <div class="workbench-page">
     <header class="app-topbar">
-      <div class="brand-block"><div class="brand-logo">审</div><div class="brand-name"><strong>产品资料概要核对</strong></div></div>
+      <div class="brand-block"><div class="brand-logo">审</div><div class="brand-name"><strong>基金招募说明书、产品资料概要审核</strong></div></div>
       <div class="topbar-actions"><el-button type="primary" class="upload-trigger" @click="$router.push('/')">核对任务</el-button></div>
     </header>
     <main class="workbench-main summary-workbench-main" v-loading="loading">
-      <nav class="task-detail-nav"><router-link :to="returnPath"><i class="el-icon-arrow-left" /> 核对任务</router-link><span class="detail-nav-divider" /><span class="detail-task-id">{{ taskId }}</span><el-tag v-if="job" size="small" :type="job.status === 'failed' ? 'danger' : job.status === 'completed' ? 'success' : 'info'">{{ jobStatus }}</el-tag><span v-if="elapsed" class="detail-elapsed">执行用时 {{ elapsed }}</span></nav>
+      <nav class="task-detail-nav summary-task-nav"><router-link :to="returnPath"><i class="el-icon-arrow-left" /> 核对任务</router-link><span class="detail-nav-divider" /><el-tag v-if="job" size="small" :type="job.status === 'failed' ? 'danger' : job.status === 'completed' ? 'success' : 'info'">{{ jobStatus }}</el-tag><div v-if="result" class="summary-detail-title"><strong :title="result.documents.product_summary.filename">{{ result.documents.product_summary.filename }}</strong><small>产品资料概要</small></div><span v-if="elapsed" class="detail-elapsed">执行用时 {{ elapsed }}</span></nav>
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
       <div v-if="job && job.status !== 'completed'" class="task-execution-state" :class="{ failed: job.status === 'failed' }"><i :class="job.status === 'failed' ? 'el-icon-circle-close' : 'el-icon-loading'" /><strong>{{ job.message }}</strong><span v-if="job.error">{{ job.error }}</span></div>
       <div v-if="job && job.status !== 'completed' && job.steps" class="summary-progress"><span v-for="step in progressSteps" :key="step.key"><i :class="job.steps[step.key]" />{{ step.label }}<small>{{ stepLabel(job.steps[step.key]) }}</small></span></div>
-      <section v-if="result" class="summary-result-bar">
-        <div><strong>{{ result.documents.product_summary.filename }}</strong><small>产品资料概要</small></div>
-        <i class="el-icon-right" />
-        <div class="summary-reference-tabs"><button v-for="role in referenceRoles" :key="role.key" type="button" :class="{ active: activeRole === role.key }" @click="activeRole = role.key">{{ role.label }}</button></div>
-        <el-tag :type="tagType(result.status)">{{ statusLabel(result.status) }}</el-tag>
-      </section>
       <div v-if="result && result.warnings && result.warnings.length" class="warning-box"><i class="el-icon-warning-outline" /><div><p v-for="(warning, index) in result.warnings" :key="index">{{ warning }}</p></div></div>
       <section v-if="result" class="summary-review-layout">
         <aside class="findings-panel">
-          <div class="panel-heading"><h2>核对结果</h2><el-tag size="small" :type="tagType(result.status)">{{ statusLabel(result.status) }}</el-tag></div>
-          <div class="findings-subheading"><span>Excel 核对项</span><span class="difference-total">已比对 {{ result.compared_count || 0 }} 项，待复核 {{ result.unresolved_count || 0 }} 项，未核对 {{ result.not_checked_count || 0 }} 项</span></div>
+          <div class="panel-heading"><h2>核对结果</h2><el-select v-model="statusFilter" size="mini" class="result-category-filter" aria-label="按核对结果筛选"><el-option label="全部结果" value="" /><el-option label="存在差异" value="difference" /><el-option label="待人工复核" value="review" /><el-option label="一致" value="match" /></el-select><el-tag size="small" :type="tagType(result.status)">{{ statusLabel(result.status) }}</el-tag></div>
+          <div class="findings-subheading"><span>Excel 核对项</span><span class="difference-total">已比对 {{ result.compared_count || 0 }} 项，待复核 {{ result.unresolved_count || 0 }} 项</span></div>
           <div class="summary-items">
-            <button v-for="(item, index) in displayItems" :key="item.key" type="button" class="summary-item" :class="[{ selected: selectedIndex === index }, statusClass(item.status)]" @click="selectItem(index)">
-              <span class="status-dot" :class="statusClass(item.status)" />
-              <span class="summary-item-body"><strong>{{ item.label }}</strong><span>{{ valueText(item.summary) }} <i class="el-icon-right" /> {{ valueText(item.reference) }}</span><small>{{ roleLabel(item.reference && item.reference.role) }}<template v-if="itemReason(item)">：{{ itemReason(item) }}</template></small></span>
-              <el-tag size="mini" :type="tagType(item.status)">{{ statusLabel(item.status) }}</el-tag>
-            </button>
-            <el-empty v-if="!displayItems.length" description="暂无核对结果" />
+            <section v-for="group in groupedItems" :key="group.id" class="module-card" :class="{ expanded: expandedGroupId === group.id }">
+              <button type="button" class="module-toggle" :aria-expanded="expandedGroupId === group.id" @click="toggleGroup(group.id)">
+                <span class="status-dot" :class="statusClass(groupStatus(group))" />
+                <span class="module-title">{{ group.label }}</span>
+                <span class="module-count">{{ groupStatus(group) === 'MATCH' ? '一致' : group.items.length + ' 项' }}</span>
+                <i :class="expandedGroupId === group.id ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" />
+              </button>
+              <div v-if="expandedGroupId === group.id" class="module-details">
+                <button v-for="entry in group.items" :key="entry.item.key" type="button" class="summary-item" :class="[{ selected: selectedIndex === entry.index }, statusClass(entry.item.status)]" @click="selectItem(entry.index)">
+                  <span class="status-dot" :class="statusClass(entry.item.status)" />
+                  <span class="summary-item-body"><strong>{{ entry.item.label }}</strong><span>{{ valueText(entry.item.summary) }} <i class="el-icon-right" /> {{ valueText(entry.item.reference) }}</span><small>{{ roleLabel(entry.item.reference && entry.item.reference.role) }}<template v-if="itemReason(entry.item)">：{{ itemReason(entry.item) }}</template></small></span>
+                  <el-tag size="mini" :type="tagType(entry.item.status)">{{ statusLabel(entry.item.status) }}</el-tag>
+                </button>
+              </div>
+            </section>
+            <el-empty v-if="!groupedItems.length" description="暂无核对结果" />
           </div>
           <div class="legend-note"><span><i class="legend-dot mismatch" />披露差异</span><span><i class="legend-dot unresolved" />待复核</span></div>
         </aside>
@@ -52,7 +56,7 @@ export default {
   name: "ProductSummaryWorkbench",
   components: { PdfViewer },
   props: { taskId: { type: String, required: true } },
-  data() { return { job: null, result: null, loading: true, error: "", selectedIndex: 0, activeRole: "", now: Date.now(), timer: null, pollTimer: null }; },
+  data() { return { job: null, result: null, loading: true, error: "", selectedIndex: 0, statusFilter: "", expandedGroupId: "fund_profile", activeRole: "", now: Date.now(), timer: null, pollTimer: null }; },
   computed: {
     progressSteps() { return [{ key: "preflight", label: "文件检查" }, { key: "source_index", label: "文档解析" }, { key: "primary_lookup", label: "指标定位" }, { key: "fallback_lookup", label: "补充校验" }, { key: "comparison", label: "结果核对" }]; },
     returnPath() { return this.$route.query.returnTo || "/"; },
@@ -62,7 +66,18 @@ export default {
     },
     referenceRoles() { return this.availableRoles.filter((role) => role.key !== "product_summary"); },
     displayItems() { return this.result ? this.result.items.filter((item) => !["SKIPPED", "NO_COMMON_CONTENT"].includes(item.status)) : []; },
-    currentItem() { return this.displayItems[this.selectedIndex]; },
+    filteredItems() { return this.displayItems.filter((item) => !this.statusFilter || this.resultCategory(item.status) === this.statusFilter); },
+    groupedItems() {
+      const labels = { fund_profile: "基金基本信息", investment_details: "投资信息", fees: "费用信息" };
+      const groups = new Map();
+      this.filteredItems.forEach((item, index) => {
+        const id = item.module_id || "other";
+        if (!groups.has(id)) groups.set(id, { id, label: labels[id] || "其他信息", items: [] });
+        groups.get(id).items.push({ item, index });
+      });
+      return Array.from(groups.values());
+    },
+    currentItem() { return this.filteredItems[this.selectedIndex]; },
     summaryDocument() { return this.result && this.result.documents.product_summary || null; },
     referenceDocument() { return this.result && this.result.documents[this.activeRole] || null; },
     summaryEvidences() { return this.toViewerEvidences(this.currentItem && this.currentItem.summary); },
@@ -76,17 +91,38 @@ export default {
     },
     jobStatus() { return this.job && this.job.status === "completed" ? "已完成" : this.job && this.job.status === "failed" ? "失败" : "核对中"; },
   },
-  watch: { taskId: { immediate: true, handler() { this.load(); } }, activeRole() { this.$nextTick(() => this.scrollEvidence()); }, selectedIndex() { this.$nextTick(() => this.scrollEvidence()); } },
+  watch: { taskId: { immediate: true, handler() { this.statusFilter = ""; this.selectedIndex = 0; this.expandedGroupId = "fund_profile"; this.load(); } }, statusFilter() { this.selectedIndex = 0; this.$nextTick(() => { if (!this.groupedItems.some((group) => group.id === this.expandedGroupId)) this.expandedGroupId = this.groupedItems[0] && this.groupedItems[0].id || ""; }); }, activeRole() { this.$nextTick(() => this.scrollEvidence()); }, selectedIndex() { this.$nextTick(() => this.scrollEvidence()); } },
   mounted() { this.timer = window.setInterval(() => { this.now = Date.now(); }, 1000); this.pollTimer = window.setInterval(() => { if (this.job && ["queued", "running"].includes(this.job.status)) this.load(true); }, 3000); },
   beforeDestroy() { window.clearInterval(this.timer); window.clearInterval(this.pollTimer); },
   methods: {
     itemReason(item) {
       const reference = item.reference || {};
+      if (item.status === "NOT_CHECKED" && item.primary_lookup && item.primary_lookup.status === "NOT_APPLICABLE") {
+        const reportName = this.result && this.result.documents.periodic_report && this.result.documents.periodic_report.filename || "";
+        if (["audit_fee", "disclosure_fee"].includes(item.key) && /季度报告/.test(reportName)) {
+          return "当前上传的是季度报告，报告类型不适用于年度预估费用核对；请使用中期报告或年度报告。";
+        }
+        return "当前定期报告类型不适用于此项核对，请使用适用的报告。";
+      }
       if (item.status === "MATCH" && reference.role === "prospectus") {
         return item.fallback_lookup && item.fallback_lookup.comparison_reason || "概要与补充招募说明书的本项披露一致。";
       }
       if (item.status === "MATCH") return reference.reason || item.reason || "双方字段原文及引用已通过核验，核对一致。";
       return item.reason;
+    },
+    groupStatus(group) {
+      const statuses = group.items.map((entry) => entry.item.status);
+      if (statuses.every((status) => status === "MATCH")) return "MATCH";
+      if (statuses.includes("MISMATCH")) return "MISMATCH";
+      if (statuses.some((status) => ["UNRESOLVED", "UNRESOLVED_STRUCTURE", "UNRESOLVED_ROW_IDENTITY"].includes(status))) return "UNRESOLVED";
+      return statuses[0] || "NOT_CHECKED";
+    },
+    toggleGroup(groupId) { this.expandedGroupId = this.expandedGroupId === groupId ? "" : groupId; },
+    resultCategory(status) {
+      if (status === "MATCH") return "match";
+      if (["MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE", "RANK_ORDER_CHANGED"].includes(status)) return "difference";
+      if (["UNRESOLVED", "NOT_CHECKED", "UNRESOLVED_STRUCTURE", "UNRESOLVED_ROW_IDENTITY"].includes(status)) return "review";
+      return "not-compared";
     },
     async load(silent) {
       if (!silent) this.loading = true;
@@ -97,15 +133,15 @@ export default {
       } catch (error) { this.error = error.response && error.response.data && error.response.data.detail || "无法读取核对任务"; }
       finally { this.loading = false; }
     },
-    selectItem(index) { this.selectedIndex = index; const item = this.displayItems[index]; const reference = this.referenceRoles.find((role) => item.references && item.references[role.key] && item.references[role.key].evidence.length); if (reference) this.activeRole = reference.key; },
+    selectItem(index) { this.selectedIndex = index; const item = this.filteredItems[index]; const reference = this.referenceRoles.find((role) => item.references && item.references[role.key] && item.references[role.key].evidence.length); if (reference) this.activeRole = reference.key; },
     toViewerEvidences(side) { const item = this.currentItem; return (side && side.evidence || []).map((source) => ({ ...source, status: "LOCATED", field_label: item.label, difference_status: item.status })); },
     scrollEvidence() { const summary = this.summaryEvidences[0], reference = this.referenceEvidences[0]; if (summary && this.$refs.summaryViewer) this.$refs.summaryViewer.scrollToPage(summary.page); if (reference && this.$refs.referenceViewer) this.$refs.referenceViewer.scrollToPage(reference.page); },
     roleLabel(role) { const item = this.availableRoles.find((value) => value.key === role); return item ? item.label : role; },
     valueText(side) { return side && side.raw_text || "—"; },
     statusClass(status) { return String(status || "").toLowerCase().replace(/_/g, "-"); },
-    statusLabel(status) { return ({ MATCH: "一致", MISMATCH: "存在差异", UNRESOLVED: "待复核", NOT_CHECKED: "未核对", SOURCE_MISSING: "缺少来源", SKIPPED: "未核对" })[status] || "待复核"; },
+    statusLabel(status) { return ({ MATCH: "一致", MISMATCH: "存在差异", UNRESOLVED: "待复核", NO_COMMON_CONTENT: "无可比较内容", NOT_CHECKED: "待复核", SOURCE_MISSING: "缺少来源", SKIPPED: "待复核" })[status] || "待复核"; },
     stepLabel(status) { return ({ queued: "等待", running: "处理中", completed: "完成", failed: "失败" })[status] || "等待"; },
-    tagType(status) { return status === "MATCH" ? "success" : status === "MISMATCH" ? "danger" : ["SKIPPED", "NOT_CHECKED", "NO_COMMON_CONTENT"].includes(status) ? "info" : "warning"; },
+    tagType(status) { return status === "MATCH" ? "success" : status === "MISMATCH" ? "danger" : ["SKIPPED", "NO_COMMON_CONTENT"].includes(status) ? "info" : "warning"; },
   },
 };
 </script>

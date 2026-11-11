@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
+from io import BytesIO
 import os
 import secrets
 import traceback
+import time
 from collections import OrderedDict
 from datetime import date, datetime, timezone
 from typing import Literal
@@ -22,6 +26,7 @@ from app.ai import make_provider
 from app.audit import TaskAuditStore
 from app.runtime import InvestmentComparisonWorkflow, ProductSummaryVerificationWorkflow, WorkflowContext, WorkflowEngine, WorkflowRegistry
 from app.summary_check import RULE_VERSION as SUMMARY_RULE_VERSION
+from app.preflight import _apply_consistent_batch_fund_names, _document_metadata
 from app.rule_store import RuleConflictError, get_rule, list_rules, save_rule
 from app.versioning import runtime_source_fingerprint
 
@@ -43,6 +48,113 @@ JOBS: OrderedDict[str, dict] = OrderedDict(
 JOB_TASKS: dict[str, asyncio.Task] = {}
 JOB_LOCK = RLock()
 PREVIEW_LOCK = RLock()
+INTAKE_BATCHES: OrderedDict[str, dict] = OrderedDict()
+INTAKE_TTL_SECONDS = 30 * 60
+INTAKE_BATCH_LIMIT = 3
+INTAKE_FILE_LIMIT = 100
+INTAKE_TOTAL_BYTES_LIMIT = 160 * 1024 * 1024
+INTAKE_LOCK = RLock()
+
+
+def _intake_identity_matches(core: dict, report: dict) -> bool:
+    left = core.get("metadata") or {}
+    right = report.get("metadata") or {}
+    left_code, right_code = left.get("fund_code"), right.get("fund_code")
+    if left_code and right_code:
+        return left_code == right_code
+    def normalize(value: str | None) -> str:
+        without_parentheses = re.sub(r"[（(][^）)]*[）)]", "", str(value or ""))
+        return re.sub(r"基金|\s+", "", without_parentheses)
+
+    left_name, right_name = normalize(left.get("fund_name")), normalize(right.get("fund_name"))
+    return bool(left_name and right_name and left_name == right_name)
+
+
+def _intake_date(metadata: dict) -> str:
+    interval = metadata.get("display_date_interval") or metadata.get("date_interval") or {}
+    return str(interval.get("end") or interval.get("start") or "") if isinstance(interval, dict) else ""
+
+
+async def _suggest_intake_matches(documents: dict[str, dict]) -> list[dict]:
+    cores = [item for item in documents.values() if item["role"] in {"prospectus", "product_summary"}]
+    reports = [item for item in documents.values() if item["role"] == "periodic_report"]
+    unresolved = []
+    for core in cores:
+        strict = [report for report in reports if _intake_identity_matches(core, report)]
+        core_date = _intake_date(core["metadata"])
+        dated = [report for report in strict if _intake_date(report["metadata"])]
+        has_local_recommendation = bool(strict) and (
+            not core_date
+            or any(_intake_date(report["metadata"]) <= core_date for report in dated)
+            or (not dated and len(strict) == 1)
+        )
+        if not has_local_recommendation:
+            unresolved.append(core)
+    if not unresolved or not reports:
+        return []
+
+    def document_summary(item: dict) -> dict:
+        metadata = item.get("metadata") or {}
+        return {
+            "id": item["id"],
+            "filename": item["filename"],
+            "relative_path": item["relative_path"],
+            "fund_name": metadata.get("fund_name"),
+            "fund_code": metadata.get("fund_code"),
+            "fund_codes": metadata.get("fund_codes") or [],
+            "document_date": _intake_date(metadata),
+            "date_label": metadata.get("display_date_label") or metadata.get("date_label"),
+            "report_subtype": metadata.get("report_subtype"),
+            "cover_text": item.get("ai_excerpt", ""),
+        }
+
+    request_data = {"core_documents": [document_summary(item) for item in unresolved],
+                    "periodic_reports": [document_summary(item) for item in reports]}
+    system_prompt = (
+        "你负责为基金文件建立候选关联。只根据输入的文件名、基金名称、代码和日期判断是否属于同一基金。"
+        "定期报告的报告期末通常早于招募说明书或产品概要日期；较近且合理的报告期优先。"
+        "不要把日期规则当成绝对门槛，也不要仅因日期较早就拒绝匹配。代码不同但名称或文件上下文能说明是同一基金时可以匹配；"
+        "信息不足或可能是不同基金时不要猜。只输出 JSON：{\"matches\":[{\"core_file_id\":\"...\","
+        "\"periodic_file_id\":\"...\",\"same_product\":true,\"confidence\":0.0,\"reason\":\"简短中文理由\"}]}。"
+        "每个核心文件最多给一个候选；ID 必须来自输入。"
+    )
+    try:
+        raw = await asyncio.wait_for(
+            provider.generate_text(system_prompt, json.dumps(request_data, ensure_ascii=False)),
+            timeout=30,
+        )
+        text = str(raw).strip()
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.S | re.I)
+        if fenced:
+            text = fenced.group(1)
+        else:
+            start, end = text.find("{"), text.rfind("}")
+            if start < 0 or end <= start:
+                return []
+            text = text[start:end + 1]
+        parsed = json.loads(text)
+    except Exception as exc:
+        print(f"intake AI matching skipped: {type(exc).__name__}")
+        return []
+
+    core_ids = {item["id"] for item in unresolved}
+    report_ids = {item["id"] for item in reports}
+    suggestions = []
+    for match in parsed.get("matches", []) if isinstance(parsed, dict) else []:
+        if not isinstance(match, dict):
+            continue
+        core_id, report_id = str(match.get("core_file_id", "")), str(match.get("periodic_file_id", ""))
+        try:
+            confidence = float(match.get("confidence", 0))
+        except (TypeError, ValueError):
+            confidence = 0
+        if (core_id not in core_ids or report_id not in report_ids or not match.get("same_product")
+                or confidence < 0.75):
+            continue
+        suggestions.append({"core_file_id": core_id, "periodic_file_id": report_id,
+                            "same_product": True, "confidence": confidence,
+                            "reason": str(match.get("reason") or "AI 根据基金信息和报告日期建议关联")[:120]})
+    return suggestions
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -92,6 +204,32 @@ workflow_engine = WorkflowEngine(workflow_registry)
 class RuleUpdatePayload(BaseModel):
     content: str = Field(max_length=512_000)
     expected_sha256: str = Field(min_length=64, max_length=64)
+
+
+class BatchTaskGroup(BaseModel):
+    workflow: Literal["investment", "summary"]
+    core_file_id: str = Field(min_length=1, max_length=12)
+    periodic_file_id: str = Field(min_length=1, max_length=12)
+    prospectus_file_id: str | None = Field(default=None, max_length=12)
+
+
+class BatchTaskSubmit(BaseModel):
+    batch_id: str = Field(min_length=16, max_length=80)
+    roles: dict[str, Literal["prospectus", "periodic_report", "product_summary", "unknown"]] = Field(default_factory=dict)
+    groups: list[BatchTaskGroup] = Field(min_length=1, max_length=50)
+
+
+def _expire_intake_batches() -> None:
+    expired = [batch_id for batch_id, batch in INTAKE_BATCHES.items() if batch["expires_at"] <= time.monotonic()]
+    for batch_id in expired:
+        INTAKE_BATCHES.pop(batch_id, None)
+
+
+def _safe_relative_path(value: str, filename: str) -> str:
+    parts = [part for part in value.replace("\\", "/").split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return filename
+    return "/".join(parts)
 
 
 @app.get("/api/rules")
@@ -489,6 +627,141 @@ async def create_product_summary_job(
     return _job_view(job)
 
 
+@app.post("/api/intake/preview")
+async def preview_upload_batch(
+    files: list[UploadFile] = File(...),
+    relative_paths: list[str] = Form(default=[]),
+) -> dict:
+    if len(files) > INTAKE_FILE_LIMIT:
+        raise HTTPException(status_code=413, detail=f"一次最多上传 {INTAKE_FILE_LIMIT} 个 PDF")
+    documents = {}
+    response_documents = []
+    total_bytes = 0
+    role_labels = {
+        "prospectus": "招募说明书",
+        "periodic_report": "定期报告",
+        "product_summary": "产品概要",
+        "unknown": "未识别",
+    }
+    for index, upload in enumerate(files):
+        content = await read_pdf(upload)
+        total_bytes += len(content)
+        if total_bytes > INTAKE_TOTAL_BYTES_LIMIT:
+            raise HTTPException(status_code=413, detail="这批文件总大小不能超过 160 MiB")
+        filename = Path(upload.filename or f"文件{index + 1}.pdf").name
+        try:
+            with fitz.open(stream=content, filetype="pdf") as source_pdf:
+                ai_excerpt = "\n".join(source_pdf[page].get_text() for page in range(min(2, source_pdf.page_count)))
+            ai_excerpt = re.sub(r"\s+", " ", ai_excerpt).strip()[:1500]
+        except Exception:
+            ai_excerpt = ""
+        try:
+            metadata = await asyncio.to_thread(_document_metadata, filename, content, "auto")
+        except Exception:
+            metadata = {"detected_roles": [], "fund_name": None, "fund_code": None,
+                        "display_date_interval": None, "display_date_label": None}
+        detected_roles = metadata.get("detected_roles") or []
+        role = detected_roles[0] if len(detected_roles) == 1 else "unknown"
+        relative_path = relative_paths[index] if index < len(relative_paths) else filename
+        item = {
+            "id": str(index), "filename": filename,
+            "relative_path": _safe_relative_path(relative_path, filename),
+            "role": role, "metadata": metadata, "content": content, "ai_excerpt": ai_excerpt,
+        }
+        documents[item["id"]] = item
+        response_documents.append({
+            "id": item["id"], "filename": filename, "relative_path": item["relative_path"],
+            "role": role, "role_label": role_labels.get(role, "未识别"),
+            "role_candidates": detected_roles,
+            "fund_name": metadata.get("fund_name"),
+            "fund_full_name": metadata.get("fund_full_name"),
+            "fund_short_name": metadata.get("fund_short_name"),
+            "fund_code": metadata.get("fund_code"),
+            "report_subtype": metadata.get("report_subtype"),
+            "date_interval": metadata.get("display_date_interval") or metadata.get("date_interval"),
+            "date_label": metadata.get("display_date_label") or metadata.get("date_label"),
+        })
+    if not documents:
+        raise HTTPException(status_code=400, detail="请先选择 PDF 文件")
+    _apply_consistent_batch_fund_names(response_documents)
+    suggested_matches = await _suggest_intake_matches(documents)
+    batch_id = secrets.token_urlsafe(24)
+    with INTAKE_LOCK:
+        _expire_intake_batches()
+        while len(INTAKE_BATCHES) >= INTAKE_BATCH_LIMIT:
+            INTAKE_BATCHES.popitem(last=False)
+        INTAKE_BATCHES[batch_id] = {
+            "documents": documents,
+            "expires_at": time.monotonic() + INTAKE_TTL_SECONDS,
+        }
+    return {"batch_id": batch_id, "expires_in_seconds": INTAKE_TTL_SECONDS,
+            "total_bytes": total_bytes, "documents": response_documents,
+            "suggested_matches": suggested_matches}
+
+
+@app.post("/api/intake/submit")
+async def submit_upload_batch(payload: BatchTaskSubmit) -> dict:
+    with INTAKE_LOCK:
+        _expire_intake_batches()
+        batch = INTAKE_BATCHES.get(payload.batch_id)
+        if batch is None:
+            raise HTTPException(status_code=410, detail="上传预览已过期，请重新选择文件")
+        INTAKE_BATCHES.move_to_end(payload.batch_id)
+        documents = batch["documents"]
+
+    def selected_document(file_id: str, expected_role: str) -> dict:
+        document = documents.get(file_id)
+        if document is None:
+            raise ValueError("所选文件已不存在，请重新扫描文件")
+        selected_role = payload.roles.get(file_id, document["role"])
+        if selected_role != expected_role:
+            raise ValueError(f"{document['filename']} 应选择为{role_labels[expected_role]}")
+        return document
+
+    role_labels = {
+        "prospectus": "招募说明书",
+        "periodic_report": "定期报告",
+        "product_summary": "产品概要",
+    }
+    seen_cores = set()
+    created = []
+    errors = []
+    for index, group in enumerate(payload.groups, start=1):
+        try:
+            if group.core_file_id in seen_cores:
+                raise ValueError("同一核心文件不能重复创建任务")
+            seen_cores.add(group.core_file_id)
+            core_role = "prospectus" if group.workflow == "investment" else "product_summary"
+            core = selected_document(group.core_file_id, core_role)
+            periodic = selected_document(group.periodic_file_id, "periodic_report")
+            if group.core_file_id == group.periodic_file_id:
+                raise ValueError("核心文件和定期报告不能是同一个文件")
+            if group.workflow == "investment":
+                prospectus_upload = UploadFile(filename=core["filename"], file=BytesIO(core["content"]))
+                periodic_upload = UploadFile(filename=periodic["filename"], file=BytesIO(periodic["content"]))
+                job = await create_comparison_job(prospectus_upload, periodic_upload, False)
+            else:
+                prospectus = None
+                if group.prospectus_file_id:
+                    if group.prospectus_file_id in {group.core_file_id, group.periodic_file_id}:
+                        raise ValueError("补充招募说明书不能与核心文件或定期报告重复")
+                    supplement = selected_document(group.prospectus_file_id, "prospectus")
+                    prospectus = UploadFile(filename=supplement["filename"], file=BytesIO(supplement["content"]))
+                summary_upload = UploadFile(filename=core["filename"], file=BytesIO(core["content"]))
+                periodic_upload = UploadFile(filename=periodic["filename"], file=BytesIO(periodic["content"]))
+                job = await create_product_summary_job(summary_upload, periodic_upload, prospectus)
+            created.append(job)
+        except (ValueError, HTTPException) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            errors.append({"group": index, "message": detail})
+        except Exception as exc:
+            errors.append({"group": index, "message": f"创建失败：{type(exc).__name__}"})
+    if created:
+        with INTAKE_LOCK:
+            INTAKE_BATCHES.pop(payload.batch_id, None)
+    return {"jobs": created, "errors": errors}
+
+
 @app.get("/api/jobs")
 async def list_comparison_jobs() -> dict:
     return {"jobs": [_job_view(job) for job in AUDIT_STORE.recent_jobs(100)]}
@@ -499,13 +772,13 @@ async def query_comparison_tasks(
     q: str = Query("", max_length=200),
     status: Literal["queued", "running", "completed", "failed"] | None = None,
     result_status: str | None = Query(None, max_length=40),
-    start_date: date | None = None,
-    end_date: date | None = None,
+    report_start: date | None = None,
+    report_end: date | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
 ) -> dict:
-    if start_date and end_date and start_date > end_date:
-        raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
+    if report_start and report_end and report_start > report_end:
+        raise HTTPException(status_code=422, detail="报告区间开始日期不能晚于结束日期")
     keyword = q.strip().casefold()
     matches = []
     for job in AUDIT_STORE.job_summaries():
@@ -516,15 +789,14 @@ async def query_comparison_tasks(
         search = [job.get("job_id"), job.get("fund_name"), job.get("fund_code"), *(job.get("document_names") or {}).values()]
         if keyword and not any(keyword in str(value or "").casefold() for value in search):
             continue
-        if start_date or end_date:
+        if report_start or report_end:
             try:
-                created = datetime.fromisoformat(str(job["created_at"]).replace("Z", "+00:00"))
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
-                local_date = created.astimezone(ZoneInfo("Asia/Shanghai")).date()
+                report_interval = (job.get("document_dates") or {}).get("periodic_report") or {}
+                interval_start = date.fromisoformat(str(report_interval["start"]))
+                interval_end = date.fromisoformat(str(report_interval.get("end") or report_interval["start"]))
             except (ValueError, TypeError, KeyError):
                 continue
-            if (start_date and local_date < start_date) or (end_date and local_date > end_date):
+            if (report_end and interval_start > report_end) or (report_start and interval_end < report_start):
                 continue
         matches.append(job)
     offset = (page - 1) * page_size

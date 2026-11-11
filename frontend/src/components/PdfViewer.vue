@@ -41,7 +41,6 @@
               :class="statusClass(item.difference_status)"
               :style="boxStyle(item)"
             >
-              <span>{{ item.field_label || '核对位置' }}</span>
             </div>
           </div>
         </article>

@@ -26,6 +26,8 @@ def _atomic_json(path: Path, value: Any) -> None:
 class TaskAuditStore:
     """Local, human-readable audit records for background comparison jobs."""
 
+    SUMMARY_VERSION = 2
+
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root).expanduser().resolve()
         self._lock = RLock()
@@ -83,6 +85,7 @@ class TaskAuditStore:
     def summarize(self, job: dict[str, Any], metadata: dict | None = None) -> dict:
         fields = ("job_id", "run_id", "workflow_id", "historical", "status", "stage", "message", "created_at", "started_at", "updated_at", "completed_at", "steps", "error")
         summary = {key: job.get(key) for key in fields}
+        summary["_summary_version"] = self.SUMMARY_VERSION
         result = job.get("result") or {}
         preflight = result.get("preflight") or {}
         documents = result.get("documents") or {}
@@ -97,9 +100,34 @@ class TaskAuditStore:
         for role, document in documents.items():
             if document.get("filename"):
                 names[role] = document["filename"]
+        document_dates = {}
+        for role in ("prospectus", "periodic_report", "product_summary"):
+            preflight_info = preflight.get(role) or {}
+            document_info = (documents.get(role) or {}).get("document_info") or {}
+            interval = (
+                preflight_info.get("display_date_interval")
+                or document_info.get("display_date_interval")
+                or preflight_info.get("date_interval")
+                or document_info.get("date_interval")
+            )
+            if not isinstance(interval, dict) and role == "periodic_report":
+                period_end = document_info.get("period_end")
+                if period_end:
+                    interval = {"start": period_end, "end": period_end}
+            if isinstance(interval, dict) and interval.get("start"):
+                document_dates[role] = {
+                    "label": (
+                        preflight_info.get("display_date_label")
+                        or document_info.get("display_date_label")
+                        or preflight_info.get("date_label")
+                        or document_info.get("date_label")
+                    ),
+                    "start": interval.get("start"),
+                    "end": interval.get("end") or interval.get("start"),
+                }
         identity_role = "product_summary" if job.get("workflow_id") == "product-summary-verification" else "prospectus"
         info = (documents.get(identity_role) or {}).get("document_info") or preflight.get(identity_role) or preflight.get("prospectus") or {}
-        summary.update(document_names=names, fund_name=info.get("fund_name"), fund_code=info.get("fund_code"),
+        summary.update(document_names=names, document_dates=document_dates, fund_name=info.get("fund_name"), fund_code=info.get("fund_code"),
                        result_status=result.get("status"), difference_count=result.get("difference_count"),
                        not_checked_count=result.get("not_checked_count"),
                        preflight_blocked=bool(preflight.get("blocked")), preflight_message=preflight.get("message"))
@@ -113,10 +141,13 @@ class TaskAuditStore:
                 if summary_path.exists() and summary_path.stat().st_mtime_ns >= job_path.stat().st_mtime_ns:
                     summary = json.loads(summary_path.read_text(encoding="utf-8"))
                 else:
+                    summary = {}
+                if summary.get("_summary_version") != self.SUMMARY_VERSION:
                     summary = self.summarize(json.loads(job_path.read_text(encoding="utf-8")))
                     with self._lock:
                         _atomic_json(summary_path, summary)
                 if summary.get("job_id"):
+                    summary.pop("_summary_version", None)
                     summaries.append(summary)
             except (OSError, ValueError, TypeError, AttributeError):
                 continue

@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import time
+import unicodedata
 from html import unescape
 from pathlib import Path
 from typing import Any, Callable
@@ -773,6 +774,13 @@ def _compare_code_sets(summary_value: str, reference_value: str) -> str | None:
     if len(summary_codes) == len(reference_codes) == 1:
         return "MISMATCH"
     return None
+
+
+def _normalize_exchange_name_composite(value: str) -> str:
+    """Join the two summary exchange names for comparison with the report field."""
+    normalized = unicodedata.normalize("NFKC", value or "").casefold()
+    normalized = re.sub(r"场内简称|扩位证券简称", "", normalized)
+    return re.sub(r"[\s,，、;；:：]+", "", normalized)
 
 
 def _field_evidence_is_substantive(item: dict[str, Any], evidence: list[dict[str, Any]]) -> bool:
@@ -1606,6 +1614,14 @@ async def compare_product_summary(
                 ref_status = "UNRESOLVED"
             else:
                 ref_status = "MATCH" if summary_number == reference_number else "MISMATCH"
+        if (rule.get("comparison_policy") == "composite_exchange_names"
+                and selected_role == primary_role and primary_role == "periodic_report"
+                and summary_evidence and reference_evidence):
+            summary_names = _normalize_exchange_name_composite(summary_value)
+            reference_names = _normalize_exchange_name_composite(reference_value)
+            if summary_names and summary_names == reference_names:
+                ref_status = "MATCH"
+                ref["reason"] = "产品资料概要中的场内简称和扩位证券简称合并后，与定期报告场内简称一致。"
         if (rule.get("comparison_policy") in {"role_aware_identifier", "code_set_intersection"}
                 and ref_status in {"MATCH", "MISMATCH"} and summary_evidence and reference_evidence):
             code_status = _compare_code_sets(summary_value, reference_value)
@@ -1614,21 +1630,24 @@ async def compare_product_summary(
             # The fallback lookup response includes a separate semantic comparison decision.
             ref_status = ref_status if ref_status in {"MATCH", "MISMATCH", "UNRESOLVED"} else "UNRESOLVED"
         if rule_input["primary_source_eligibility"] != "ELIGIBLE":
-            status, reason_code = "NOT_CHECKED", "PRIMARY_SOURCE_DATE_UNCONFIRMED" if rule_input["primary_source_eligibility"] == "DATE_UNCONFIRMED" else "PRIMARY_SOURCE_AFTER_TARGET_DATE"
+            status, reason_code = "UNRESOLVED", "PRIMARY_SOURCE_DATE_UNCONFIRMED" if rule_input["primary_source_eligibility"] == "DATE_UNCONFIRMED" else "PRIMARY_SOURCE_AFTER_TARGET_DATE"
         elif fallback_selected and fallback_outcome.get("date_status") != "ELIGIBLE":
             status, reason_code = "UNRESOLVED", "FALLBACK_SOURCE_DATE_UNCONFIRMED"
         elif not rule_input["summary_candidates"]:
-            status, reason_code = "NOT_CHECKED", "TARGET_FIELD_NOT_FOUND_IN_PRESET_SCOPE"
+            status, reason_code = "UNRESOLVED", "TARGET_FIELD_NOT_FOUND_IN_PRESET_SCOPE"
         elif not summary_evidence and primary_lookup_status in {"NO_CANDIDATES_UNCONFIRMED", "NOT_APPLICABLE"}:
-            status, reason_code = "NOT_CHECKED", "FIELD_CANDIDATES_NOT_CONFIRMED"
+            status, reason_code = "UNRESOLVED", "FIELD_CANDIDATES_NOT_CONFIRMED"
         elif not summary_evidence:
             status, reason_code = "UNRESOLVED", "TARGET_NOT_LOCATED"
         elif not fallback_selected and primary_lookup_status == "UNRESOLVED" and value.get("primary_lookup_reason_code"):
             status, reason_code = "UNRESOLVED", value["primary_lookup_reason_code"]
         elif not fallback_selected and primary_lookup_status in {"NO_CANDIDATES_UNCONFIRMED", "NOT_APPLICABLE"} and ref_status not in {"MATCH", "MISMATCH"}:
-            status, reason_code = "NOT_CHECKED", "PRIMARY_LOOKUP_UNCONFIRMED"
+            status, reason_code = "UNRESOLVED", "PRIMARY_LOOKUP_UNCONFIRMED"
+        elif (not fallback_selected and primary_lookup_status == "CONFIRMED_ABSENT" and summary_evidence
+              and fallback_outcome.get("status") not in {"UNRESOLVED", "EXTRACTION_FAILED"}):
+            status, reason_code = "MISMATCH", "PRIMARY_FIELD_CONFIRMED_ABSENT"
         elif not fallback_selected and ref_status == "SOURCE_MISSING":
-            status, reason_code = "NOT_CHECKED", "NO_VALID_REFERENCE"
+            status, reason_code = "UNRESOLVED", "NO_VALID_REFERENCE"
         elif basis_unconfirmed and summary_evidence and reference_evidence:
             status, reason_code = "UNRESOLVED", "COMPARISON_BASIS_UNCONFIRMED"
         elif ref_status in {"MATCH", "MISMATCH"} and reference_evidence:
@@ -1693,7 +1712,7 @@ async def compare_product_summary(
             "excel_row": rule.get("excel_row"), "key": rule["key"], "label": rule["label"], "status": status,
             "extraction_status": extraction_status,
             "applicability_status": applicability_status,
-            "comparison_status": status if status in {"MATCH", "MISMATCH", "UNRESOLVED"} else "NOT_CHECKED",
+            "comparison_status": status if status in {"MATCH", "MISMATCH", "UNRESOLVED"} else "UNRESOLVED",
             "evidence_status": evidence_status,
             "comparison_basis": comparison_basis,
             "facts": {"target": target_fact_record, "selected_reference": selected_reference_fact_record},
@@ -1717,12 +1736,14 @@ async def compare_product_summary(
             "reason_code": reason_code,
             "reason": str(
                 fallback_outcome.get("date_reason") if fallback_selected and fallback_outcome.get("date_status") != "ELIGIBLE"
-                else "概要指定章节未命中该指标，未执行比较。" if reason_code == "TARGET_FIELD_NOT_FOUND_IN_PRESET_SCOPE"
+                else "左侧文档指定章节未能定位该指标，请确认章节和指标范围。" if reason_code == "TARGET_FIELD_NOT_FOUND_IN_PRESET_SCOPE"
+                else "右侧定期报告已确认未披露左侧指标。" if reason_code == "PRIMARY_FIELD_CONFIRMED_ABSENT"
                 else "期间、费用性质或币种单位未确认一致，未作金额差异判断。" if reason_code == "COMPARISON_BASIS_UNCONFIRMED"
+                else "未能确认右侧文档中的对应指标或模块，需人工复核。" if reason_code in {"FIELD_CANDIDATES_NOT_CONFIRMED", "PRIMARY_LOOKUP_UNCONFIRMED", "NO_VALID_REFERENCE"}
                 else (fallback_outcome.get("comparison_reason") or "已使用招募说明书原文完成本项核对。") if fallback_selected
                 else ref.get("reason") or value.get("reason") or rule_input["primary_source_eligibility_reason"]
                 or ("双方字段原文及引用已通过核验，核对一致。" if status == "MATCH" else None)
-                or ("主要来源尚不能确认是否披露。" if status == "NOT_CHECKED" else "未提供可验证的比较依据")
+                or "未能确认该左侧指标在右侧文档中的对应披露，请人工复核。"
             ),
         })
     if trace:
@@ -1745,9 +1766,8 @@ async def compare_product_summary(
     overall_status = (
         "MISMATCH" if difference_count else
         "UNRESOLVED" if unresolved_count else
-        "NOT_CHECKED" if skipped_count else
         "MATCH" if compared_count else
-        "SKIPPED"
+        "NO_COMMON_CONTENT"
     )
     return {
         "schema_version": 3,
