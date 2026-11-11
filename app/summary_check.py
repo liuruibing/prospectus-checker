@@ -5,10 +5,10 @@ import hashlib
 import json
 import re
 import time
+from difflib import SequenceMatcher
 from html import unescape
 from pathlib import Path
 from typing import Any, Callable
-from datetime import date
 
 import pymupdf as fitz
 
@@ -17,47 +17,46 @@ from app.pdf_worker import run_pdf
 from app.source_evidence import evidence_source
 from app.source_aliases import SourceAliasProvider
 from app.model_json import read_model_json
-from app.summary_rules import load_markdown_rules, module_groups
-from app.rule_compiler import capture_rule_set
+from app.summary_rules import RULE_DIR, load_markdown_rules, module_groups
+from app.rule_compiler import capture_rule_set, load_compiled_execution_plan
+from app.rule_plan import eligible_fallbacks
+from app.comparison import compare_declared_field, evaluate_declared_context
 
 
-RULE_CONFIG, RULES = load_markdown_rules()
+RULE_CONFIG, RULES = load_markdown_rules(require_execution_plans=True)
 RULE_VERSION = str(RULE_CONFIG["version"])
 CONTEXT_BATCH_CHARACTERS = 16_000
 LOGICAL_TABLE_CHARACTERS = 32_000
 MODEL_PAYLOAD_CHARACTERS = 48_000
 MODEL_REQUEST_CHARACTERS = 64_000
-# Compatibility fields are output/provenance only. New prompts and workflow
-# joins use stable item_id; Excel row numbers never identify execution items.
+SECTION_HINT_SIMILARITY_THRESHOLD = 0.45
+# The stable key is used only for result indexing and presentation.
 for _rule in RULES:
     _rule.setdefault("key", _rule["item_id"])
-    _rule.setdefault("terms", _rule.get("search_terms", []))
 
 
 def _load_rule_snapshot() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Read a consistent rule snapshot when a comparison starts."""
-    return load_markdown_rules()
+    return load_markdown_rules(require_execution_plans=True)
 
 
 def capture_product_summary_rule_snapshot() -> dict[str, Any]:
     """Freeze the parsed rules and their source/execution version for one task."""
     config, rules = _load_rule_snapshot()
     provenance = capture_rule_set("product_summary")
+    execution_plans = {rule["item_id"]: rule["execution_plan"] for rule in rules}
     return {
         **provenance,
         "rule_config": config,
         "rules": rules,
+        "execution_plans": execution_plans,
     }
 
 
-def _normalize_model_item_id(value: dict[str, Any], row_to_item_id: dict[int, str]) -> dict[str, Any] | None:
+def _normalize_model_item_id(value: dict[str, Any]) -> dict[str, Any] | None:
     item_id = value.get("item_id")
     if isinstance(item_id, str) and item_id:
         return {**value, "item_id": item_id}
-    # Read-only compatibility for stored/test responses from the old prompt.
-    row = value.get("excel_row")
-    if str(row).isdigit() and int(row) in row_to_item_id:
-        return {**value, "item_id": row_to_item_id[int(row)]}
     return None
 
 
@@ -248,75 +247,6 @@ def _norm(value: str) -> str:
     return re.sub(r"\s+", "", value).casefold()
 
 
-def _metadata_date_interval(metadata: dict[str, Any], interval_key: str, date_key: str) -> tuple[date, date] | None:
-    interval = metadata.get(interval_key)
-    if isinstance(interval, dict):
-        try:
-            return date.fromisoformat(interval["start"]), date.fromisoformat(interval["end"])
-        except (KeyError, TypeError, ValueError):
-            return None
-    value = metadata.get(date_key)
-    if isinstance(value, str):
-        try:
-            parsed = date.fromisoformat(value)
-            return parsed, parsed
-        except ValueError:
-            return None
-    return None
-
-
-def _fallback_source_date_status(
-    rule: dict[str, Any], documents: dict[str, dict[str, Any]], fallback_role: str,
-    *, historical: bool,
-) -> tuple[str, str | None]:
-    """Check whether a supplemental document can support the target's time point."""
-    if not historical:
-        return "ELIGIBLE", None
-    target = _metadata_date_interval(
-        documents.get("product_summary", {}).get("metadata", {}),
-        "compiled_date_interval", "compiled_date",
-    )
-    source = _metadata_date_interval(
-        documents.get(fallback_role, {}).get("metadata", {}),
-        "date_interval", "date",
-    )
-    if not target or not source:
-        return "DATE_UNCONFIRMED", "无法确认补充文件版本在概要编制时已适用。"
-    if source[0] > target[1]:
-        return "AFTER_TARGET_DATE", "补充文件版本晚于概要编制日期，不能直接作为当时适用依据。"
-    if source == target and source[0] == source[1]:
-        return "DATE_UNCONFIRMED", "补充文件与概要日期相同，无法仅凭日期确认先后或适用关系。"
-    # Coarse date precision (for example, a prospectus dated only by month)
-    # can overlap the summary's compilation date without proving the source is
-    # a later version. Let evidence and field applicability decide; only a
-    # source interval wholly after the target is blocked above.
-    return "ELIGIBLE", None
-
-
-def _fallback_trigger_reason(
-    rule: dict[str, Any], fallback_when: list[str], *, lookup_override: str | None,
-    primary_not_applicable: bool, primary_fact_verified: bool,
-) -> str | None:
-    """Resolve the rule-declared fallback policy without indicator-name branches."""
-    if primary_fact_verified:
-        return None
-    conditions = set(fallback_when)
-    if lookup_override == "CONFIRMED_ABSENT" and "primary_confirmed_absent" in conditions:
-        return "PRIMARY_CONFIRMED_ABSENT"
-    if primary_not_applicable and "primary_not_applicable" in conditions:
-        return "PRIMARY_NOT_APPLICABLE"
-    if ("same_contract_annual_rate" in conditions
-            and rule.get("value_type") == "annual_rate"
-            and not primary_fact_verified):
-        return "PRIMARY_ANNUAL_RATE_NOT_VERIFIED"
-    if ("same_period_same_nature_amount" in conditions
-            and rule.get("period_policy") == "same_period"
-            and lookup_override == "CONFIRMED_ABSENT"
-            and not primary_fact_verified):
-        return "PRIMARY_PERIOD_AMOUNT_CONFIRMED_ABSENT"
-    return None
-
-
 def _recovery_candidates(
     item: dict[str, Any], side: str, preferred_ids: list[str] | None = None, *, limit: int = 80,
 ) -> list[dict[str, Any]]:
@@ -335,7 +265,9 @@ def _recovery_candidates(
         }
         return result
     candidates = item.get(f"{side}_candidates", [])
-    terms = [_search_norm(term) for term in [item.get("label", ""), *item.get("terms", [])] if term]
+    search = (item.get("execution_plan") or {}).get("search_intent", {})
+    terms = [_search_norm(term) for term in [item.get("label", ""), search.get("target_description", ""),
+                                               *search.get("preferred_sections", [])] if term]
     anchors = {index for index, source in enumerate(candidates)
                if any(term in _search_norm(source.get(key, ""))
                       for term in terms for key in ("raw_text", "row_text", "cell_text"))}
@@ -408,7 +340,9 @@ def _markdown_table_context(catalogue: dict[str, Any], item: dict[str, Any]) -> 
         elif current:
             tables.append("\n".join(current))
             current = []
-    terms = [_search_norm(term) for term in [item.get("label", ""), *item.get("terms", [])] if term]
+    search = (item.get("execution_plan") or {}).get("search_intent", {})
+    terms = [_search_norm(term) for term in [item.get("label", ""), search.get("target_description", ""),
+                                               *search.get("preferred_sections", [])] if term]
     return [table for table in dict.fromkeys(tables)
             if any(term in _search_norm(unescape(re.sub(r"<[^>]*>", "", table))) for term in terms)]
 
@@ -439,17 +373,31 @@ def _chapter_directory(catalogue: dict[str, Any]) -> list[dict[str, Any]]:
     return directory
 
 
-def _prescribed_sections(catalogue: dict[str, Any], item: dict[str, Any], *, first_only: bool = True) -> list[dict[str, Any]]:
-    """Prefer configured chapter titles; ancestor matches must not pull in siblings."""
-    hints = item.get("section_hints_by_role", {}).get(catalogue.get("role"), item.get("section_hints", []))
-    if not hints and catalogue.get("role") == "product_summary":
-        hints = item.get("target_section_path", [])
+def _prescribed_sections(catalogue: dict[str, Any], item: dict[str, Any], *, first_only: bool = False) -> list[dict[str, Any]]:
+    """Route every applicable prose chapter hint, tolerating heading variation."""
+    plan = item.get("execution_plan") or {}
+    search_intent = plan.get("search_intent", {})
+    hints = search_intent.get("preferred_sections_by_role", {}).get(
+        catalogue.get("role"), search_intent.get("preferred_sections", []),
+    )
     hints = [_search_norm(hint) for hint in hints if hint]
     sections = _chapter_directory(catalogue)
     selected = []
     seen = set()
     for hint in hints:
-        roots = [section for section in sections if hint in _search_norm(section["title"])]
+        roots = []
+        for section in sections:
+            title = _search_norm(section["title"])
+            title_core = _search_norm(re.sub(
+                r"^(?:§\s*\d+(?:\.\d+)*|第[一二三四五六七八九十百]+[章节部分]+|[（(][一二三四五六七八九十]+[)）]|[一二三四五六七八九十]+、|\d+[\d.．、]*)\s*",
+                "", section["title"],
+            ))
+            # A compiled prose hint may contain the chapter title plus
+            # explanatory qualifiers. Accept that direction of containment
+            # for substantive headings, while keeping short generic labels
+            # out of the match to avoid broad routing.
+            if hint in title or hint in title_core or (len(title_core) >= 6 and title_core in hint):
+                roots.append(section)
         exact = [section for section in roots if hint == _search_norm(re.sub(
             r"^(?:§\s*\d+(?:\.\d+)*|第[一二三四五六七八九十百]+[章节部分]+|[（(][一二三四五六七八九十]+[)）]|[一二三四五六七八九十]+、|\d+[\d.．、]*)\s*",
             "", section["title"]))]
@@ -461,24 +409,64 @@ def _prescribed_sections(catalogue: dict[str, Any], item: dict[str, Any], *, fir
                     seen.add(section["section_id"])
         if roots and first_only:
             break
+    if not selected and hints:
+        # Rules are written as business language, while chapter directories
+        # contain publisher-specific headings. Use generic title similarity as
+        # a fallback; exact/contained title matches above remain authoritative.
+        scores = [
+            (SequenceMatcher(None, hint, _search_norm(section["title"])).ratio(), section)
+            for hint in hints for section in sections
+        ]
+        best = max((score for score, _ in scores), default=0.0)
+        if best >= SECTION_HINT_SIMILARITY_THRESHOLD:
+            roots = [
+                section for score, section in scores
+                if score >= max(SECTION_HINT_SIMILARITY_THRESHOLD, best - 0.04)
+            ]
+            for root in roots:
+                for section in sections:
+                    if (section["path"] == root["path"] or section["path"].startswith(root["path"] + " / ")) and section["section_id"] not in seen:
+                        selected.append(section)
+                        seen.add(section["section_id"])
     return selected
 
 
 def _source_candidates(catalogue: dict[str, Any], item: dict[str, Any]) -> list[dict[str, Any]]:
     sources = [source for page in catalogue.get("pages", []) for source in page.get("sources", [])]
-    terms = [_search_norm(term) for term in item.get("terms", item.get("search_terms", [])) if term]
+    plan = item.get("execution_plan") or {}
+    search_intent = plan.get("search_intent", {})
+    terms = [_search_norm(term) for term in [
+        item.get("label", ""), search_intent.get("target_description", ""),
+        *search_intent.get("preferred_sections", []),
+        *search_intent.get("preferred_sections_by_role", {}).get(catalogue.get("role"), []),
+    ] if isinstance(term, str) and term]
     selected_ids = {sid for section in _prescribed_sections(catalogue, item) for sid in section["source_ids"]}
+    def matches_rule_text(source: dict[str, Any]) -> bool:
+        source_texts = [_search_norm(source.get(key, "")) for key in ("raw_text", "row_text", "cell_text")]
+        for term in terms:
+            if not term:
+                continue
+            for text in source_texts:
+                if term in text:
+                    return True
+                # Rules often describe a concept more fully than a compact
+                # table cell (for example, a fee-rate rule and a cell labelled
+                # only with the fee name). Treat a meaningful source phrase
+                # contained in the rule text as an anchor too; chapter
+                # aggregation then brings the complete surrounding section.
+                if len(text) >= 3 and text in term:
+                    return True
+        return False
+
     if selected_ids:
         selected = [source for source in sources if source["source_id"] in selected_ids]
-        if catalogue.get("role") == "product_summary" and not any(
-            term in _search_norm(source.get(key, ""))
-            for source in selected for term in terms for key in ("raw_text", "row_text", "cell_text")
+        if catalogue.get("role") == plan.get("target_role") and not any(
+            matches_rule_text(source) for source in selected
         ):
             return []
         return selected
     anchors = [source for source in sources
-               if any(term in _search_norm(source.get(key, ""))
-                      for term in terms for key in ("raw_text", "row_text", "cell_text"))]
+               if matches_rule_text(source)]
     selected_ids = {source["source_id"] for anchor in anchors
                     for source in _complete_section_sources(catalogue, anchor)}
     return [source for source in sources if source["source_id"] in selected_ids]
@@ -616,6 +604,45 @@ def _payload_batches(items: list[dict[str, Any]], budget: int = MODEL_PAYLOAD_CH
     return batches
 
 
+def _isolated_payload_batches(items: list[dict[str, Any]], budget: int = MODEL_PAYLOAD_CHARACTERS) -> list[list[dict[str, Any]]]:
+    """Keep each business item's evidence scope in its own model request."""
+    batches = []
+    for item in items:
+        payload = _shared_context([item])
+        if _json_size(payload) > budget:
+            raise ValueError(f"CONTEXT_ITEM_EXCEEDS_BUDGET: {item.get('item_id')}")
+        batches.append([item])
+    return batches
+
+
+def _merge_fallback_contexts(items: list[dict[str, Any]], budget: int = MODEL_PAYLOAD_CHARACTERS) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Keep one item's related source chapters together when they fit the model budget."""
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        grouped.setdefault(item["item_id"], []).append(item)
+
+    merged_items = []
+    oversized: dict[str, int] = {}
+    for item_id, parts in grouped.items():
+        merged = dict(parts[0])
+        sources = {}
+        units = {}
+        for part in parts:
+            for source in part.get("fallback_candidates", []):
+                sources.setdefault(source["source_id"], source)
+            for unit in part.get("logical_units", []):
+                key = unit.get("unit_id") or json.dumps(unit, ensure_ascii=False, sort_keys=True)
+                units.setdefault(key, unit)
+        merged["fallback_candidates"] = list(sources.values())
+        merged["logical_units"] = list(units.values())
+        size = _json_size(_shared_context([merged]))
+        if size > budget:
+            oversized[item_id] = size
+            continue
+        merged_items.append(merged)
+    return merged_items, oversized
+
+
 def _shared_context(items: list[dict[str, Any]]) -> dict[str, Any]:
     """Send repeated chapter/table sources once, with per-item citation scopes."""
     pools: dict[str, dict[str, Any]] = {"sources": {}, "logical_units": {}, "tables": {}}
@@ -660,23 +687,9 @@ def _verified_fact(value: Any, source_ids: Any, candidates: list[dict[str, Any]]
     by_id = {source["source_id"]: source for source in candidates}
     evidence = [by_id[sid] for sid in ids if sid in by_id]
     bound = []
-    if evidence and len(evidence) == len(set(ids)) and not _field_evidence_is_substantive(rule, evidence):
-        section_ids = {source.get("section_id") for source in evidence}
-        terms = [_norm(term) for term in rule.get("terms", []) if _norm(term)]
-        if len(section_ids) == 1 and None not in section_ids:
-            headings = [source for source in candidates if source.get("section_id") in section_ids
-                        and _source_heading_info(source)
-                        and any(term in _norm(source["raw_text"]) for term in terms)]
-            if len(headings) == 1 and headings[0]["source_id"] not in ids:
-                bound = [headings[0]["source_id"]]
-                ids.extend(bound)
-                evidence.append(headings[0])
     if (value and evidence and len(evidence) == len(set(ids))
             and _numbers_are_grounded(str(value), evidence) and _field_evidence_is_substantive(rule, evidence)):
-        fact = {"value": str(value), "source_ids": ids}
-        if bound:
-            fact["citation_binding"] = {"method": "unique_section_heading", "added_source_ids": bound}
-        return fact
+        return {"value": str(value), "source_ids": ids}
     return None
 
 
@@ -724,21 +737,6 @@ async def _generate_model_text(
     return str(response)
 
 
-def _normalized_numeric_value(value: str, *, percent: bool) -> str | None:
-    pattern = r"(?<!\d)[+-]?\d[\d,]*(?:\.\d+)?\s*%?"
-    matches = re.findall(pattern, value or "")
-    if percent:
-        matches = [match for match in matches if "%" in match]
-    if len(matches) != 1:
-        return None
-    token = matches[0].replace(",", "").replace("%", "").replace(" ", "")
-    try:
-        from decimal import Decimal
-        return format(Decimal(token).normalize(), "f")
-    except Exception:
-        return None
-
-
 def _numbers_are_grounded(value: str, evidence: list[dict[str, Any]]) -> bool:
     # CJK labels can touch a numeric value without whitespace (年费率0.15%).
     # Treat ASCII identifier characters as token boundaries, but allow Chinese
@@ -774,55 +772,191 @@ def _numbers_are_grounded(value: str, evidence: list[dict[str, Any]]) -> bool:
     return expected <= observed
 
 
-def _identifier_tokens(value: str) -> set[str]:
-    return set(re.findall(r"(?<!\d)\d{6}(?!\d)", value or ""))
-
-
-def _compare_code_sets(summary_value: str, reference_value: str) -> str | None:
-    summary_codes = _identifier_tokens(summary_value)
-    reference_codes = _identifier_tokens(reference_value)
-    if not summary_codes or not reference_codes:
-        return None
-    if summary_codes == reference_codes:
-        return "MATCH"
-    # A shared master code does not establish that the selected share-class
-    # fields are equivalent. Multiple distinct identifiers need role-aware
-    # extraction; return unresolved instead of allowing an intersection match.
-    if len(summary_codes) == len(reference_codes) == 1:
-        return "MISMATCH"
-    return None
-
-
 def _field_evidence_is_substantive(item: dict[str, Any], evidence: list[dict[str, Any]]) -> bool:
-    if not evidence:
-        return False
-    terms = [_norm(term) for term in item.get("terms", []) if _norm(term)]
-    evidence_text = _norm(" ".join(source["raw_text"] for source in evidence))
-    if terms and not any(term in evidence_text for term in terms):
-        cited_ids = {source.get("source_id") for source in evidence}
-        cited_layout_terms = {
-            neighbor.get("source_id")
-            for source in evidence
-            for neighbor in source.get("layout_context", [])
-            if any(term in _norm(neighbor.get("raw_text", "")) for term in terms)
-        }
-        if not cited_ids & cited_layout_terms:
-            return False
-    # Evidence validity comes from the field label and source association, not
-    # the character count of the value. Codes and names are often very short.
-    return any(source.get("raw_text", "").strip() and _source_heading_info(source) is None
-               for source in evidence)
-
-
-def _can_compare_numeric_deterministically(rule: dict[str, Any], status: str) -> bool:
-    """Only compare fixed contractual rates numerically after both sides are evidenced."""
-    return (
-        status in {"MATCH", "MISMATCH"}
-        and rule.get("value_type") == "annual_rate"
-        and rule.get("unit_policy") == "annual_rate"
-        and rule.get("period_policy") == "applicable_at_summary_compilation"
-        and rule.get("comparison_policy") == "normalized_numeric"
+    del item
+    # Candidate membership already constrains citations to the plan-selected
+    # sections. This validator checks source integrity and rejects headings;
+    # business relevance is described in Markdown and evaluated against the
+    # bounded source context, never against a Python-maintained keyword list.
+    return any(
+        any(str(source.get(key) or "").strip() for key in ("raw_text", "row_text", "cell_text"))
+        and _source_heading_info(source) is None
+        for source in evidence
     )
+
+
+def _review_conditions_are_clear(
+    rule: dict[str, Any], assessment: dict[str, Any],
+    allowed_source_ids: set[str], valid_source_ids: set[str],
+    *, available_metadata_refs: set[str] | None = None,
+) -> bool:
+    """Require each declared condition to cite source text or trusted document metadata."""
+    conditions = (rule.get("execution_plan") or {}).get("review_conditions", [])
+    if not conditions:
+        return True
+    available_metadata_refs = available_metadata_refs or set()
+    assessments = assessment.get("review_condition_assessments")
+    if not isinstance(assessments, list) or len(assessments) != len(conditions):
+        return False
+    by_index = {}
+    for item in assessments:
+        if not isinstance(item, dict):
+            return False
+        index = item.get("condition_index")
+        if not isinstance(index, int) or isinstance(index, bool) or index in by_index:
+            return False
+        source_ids = item.get("source_ids")
+        metadata_refs = item.get("metadata_refs", [])
+        status = item.get("status")
+        if (status not in {"CLEAR", "NOT_APPLICABLE"} or not isinstance(source_ids, list)
+                or not isinstance(metadata_refs, list)):
+            return False
+        if any(not isinstance(source_id, str) for source_id in source_ids):
+            return False
+        if any(not isinstance(ref, str) for ref in metadata_refs):
+            return False
+        if status == "CLEAR" and not source_ids and not metadata_refs:
+            return False
+        if status == "NOT_APPLICABLE" and (source_ids or metadata_refs):
+            return False
+        if not str(item.get("reason") or "").strip():
+            return False
+        if not set(source_ids) <= allowed_source_ids & valid_source_ids:
+            return False
+        if not set(metadata_refs) <= available_metadata_refs:
+            return False
+        by_index[index] = item
+    return set(by_index) == set(range(len(conditions)))
+
+
+def _available_metadata_reference_ids(
+    documents: dict[str, dict[str, Any]], roles: set[str] | None = None,
+) -> set[str]:
+    """Return role-qualified references for metadata facts present in this task."""
+    return {
+        f"{role}.{key}"
+        for role, document in documents.items()
+        if roles is None or role in roles
+        for key, value in (document.get("metadata") or {}).items()
+        if value is not None and value != ""
+    }
+
+
+def _metadata_facts_for_roles(
+    documents: dict[str, dict[str, Any]], roles: set[str],
+) -> dict[str, dict[str, Any]]:
+    """Limit model-visible metadata to the documents allowed in this workflow stage."""
+    metadata_keys = (
+        "compiled_date", "compiled_date_interval", "compiled_date_quote", "period_end", "period_end_interval",
+        "period_end_quote", "sent_date", "sent_date_interval", "sent_date_quote", "date_interval", "date_label",
+        "filename_date_interval", "filename_date_quote", "filename_date_precision", "version_date",
+        "version_date_interval", "version_date_quote", "version_date_source", "version_date_precision",
+        "report_subtype", "fund_name", "fund_code", "fund_codes",
+    )
+    return {
+        role: {key: value for key in metadata_keys
+               if (value := (document.get("metadata") or {}).get(key)) is not None}
+        for role, document in documents.items() if role in roles
+    }
+
+
+def _filter_unavailable_metadata_refs(
+    assessment: dict[str, Any], available_metadata_refs: set[str],
+) -> dict[str, Any]:
+    """Keep valid evidence refs and retain rejected metadata refs for audit."""
+    normalized = dict(assessment)
+    conditions = assessment.get("review_condition_assessments")
+    if not isinstance(conditions, list):
+        return normalized
+    normalized_conditions = []
+    for condition in conditions:
+        if not isinstance(condition, dict):
+            normalized_conditions.append(condition)
+            continue
+        item = dict(condition)
+        refs = item.get("metadata_refs")
+        if item.get("status") == "CLEAR" and isinstance(refs, list):
+            rejected = [ref for ref in refs if not isinstance(ref, str) or ref not in available_metadata_refs]
+            if rejected:
+                item["metadata_refs"] = [ref for ref in refs if isinstance(ref, str) and ref in available_metadata_refs]
+                item["rejected_metadata_refs"] = rejected
+        normalized_conditions.append(item)
+    normalized["review_condition_assessments"] = normalized_conditions
+    return normalized
+
+
+def _primary_lookup_reference(
+    rule: dict[str, Any], found: dict[str, Any], primary_fact: dict[str, Any], *, coverage_complete: bool,
+) -> dict[str, Any]:
+    """Keep the model's applicability and rule-condition decisions with a routed fact."""
+    status = found.get("comparison_status")
+    if status not in {"MATCH", "MISMATCH", "UNRESOLVED"}:
+        status = "UNRESOLVED"
+    applicability = found.get("applicability_status")
+    if applicability not in {"CONFIRMED", "NOT_REQUIRED", "UNRESOLVED"}:
+        applicability = "UNRESOLVED"
+    assessments = found.get("review_condition_assessments")
+    if not isinstance(assessments, list):
+        assessments = []
+    uncovered = found.get("uncovered_aspects")
+    if not isinstance(uncovered, list):
+        uncovered = []
+    return {
+        "role": rule["primary_role"], "status": status,
+        "applicability_status": applicability,
+        "coverage_status": "COMPLETE" if coverage_complete else "PARTIAL",
+        "uncovered_aspects": [str(value) for value in uncovered if str(value).strip()][:20],
+        "review_condition_assessments": assessments,
+        **primary_fact,
+        "reason": str(found.get("reason") or "章节检查已找到可核验事实。"),
+    }
+
+
+def _compare_by_execution_plan(
+    rule: dict[str, Any], target_value: str, reference_value: str,
+    model_status: str | None, applicability_status: str | None = None,
+    review_conditions_clear: bool = True, declared_context_clear: bool = True,
+) -> str:
+    """Execute the fact operations declared by this summary rule plan."""
+    # Compare values only after source applicability, declared context, and
+    # every required review condition have passed.
+    if applicability_status == "UNRESOLVED" or not review_conditions_clear or not declared_context_clear:
+        return "UNRESOLVED"
+    fields = (rule.get("execution_plan") or {}).get("comparison", {}).get("fields", [])
+    if not fields:
+        return "UNRESOLVED"
+    if len(fields) > 1:
+        # Multiple facts are extracted together with their source labels.
+        # The model may resolve their declared semantic/text relationships,
+        # but deterministic numeric/date/identifier comparisons require
+        # field-separated values and therefore fail closed here.
+        if all(field.get("operation") in {"text", "semantic"} for field in fields):
+            return model_status if model_status in {"MATCH", "MISMATCH"} else "UNRESOLVED"
+        return "UNRESOLVED"
+    return compare_declared_field(
+        fields[0], {"raw_text": target_value}, {"raw_text": reference_value},
+        semantic_status=model_status,
+    )
+
+
+def _reason_for_final_status(
+    status: str, existing_reason: str | None = None, *,
+    model_status: str | None = None, applicability_status: str | None = None,
+    review_conditions_clear: bool = True, declared_context_clear: bool = True,
+) -> str:
+    """Keep user-facing explanation aligned with the validated final status."""
+    if status == "MATCH":
+        return "双方原文及引用已核验，并按规则声明的比较口径判定一致。"
+    if status == "MISMATCH":
+        return "双方原文及引用已核验，并按规则声明的比较口径判定存在差异。"
+    if status == "UNRESOLVED" and model_status in {"MATCH", "MISMATCH"}:
+        if not review_conditions_clear:
+            return "模型给出了比较结论，但规则要求的复核条件或证据引用未全部核验通过，保留待复核。"
+        if not declared_context_clear:
+            return "模型给出了比较结论，但所选来源的上下文条件未全部通过，保留待复核。"
+        if applicability_status == "UNRESOLVED":
+            return "模型给出了比较结论，但参考来源适用性尚未确认，保留待复核。"
+    return str(existing_reason or "规则未能确认可比较的参考事实。")
 
 
 async def compare_product_summary(
@@ -842,9 +976,7 @@ async def compare_product_summary(
     if not isinstance(rule_config, dict) or not isinstance(rules, list):
         raise ValueError("PRODUCT_SUMMARY_RULE_SNAPSHOT_INVALID")
     rule_version = str(active_rules["rules_version"])
-    for rule in rules:
-        rule.setdefault("key", rule["item_id"])
-        rule.setdefault("terms", rule.get("search_terms", []))
+    del historical  # Applicability is declared in Markdown and interpreted from its plan.
     if source_catalogues is None:
         catalogue_values = await asyncio.gather(*(
             run_pdf(build_document_source_catalogue, value["filename"], value["content"], role)
@@ -875,60 +1007,37 @@ async def compare_product_summary(
     items = []
     warnings = []
     for item in rules:
-        primary = _source_candidates(catalogues["product_summary"], item) if "product_summary" in catalogues else []
-        role = item["primary_source"]["role"]
+        execution_plan = item.get("execution_plan")
+        source_selection = execution_plan.get("source_selection") if isinstance(execution_plan, dict) else None
+        if not source_selection or not source_selection.get("primary_role"):
+            raise ValueError(f"RULE_PLAN_PRIMARY_SOURCE_MISSING: {item['item_id']}")
+        target_role = execution_plan.get("target_role")
+        if target_role not in catalogues:
+            raise ValueError(f"RULE_TARGET_DOCUMENT_MISSING: {item['item_id']}:{target_role}")
+        primary = _source_candidates(catalogues[target_role], item)
+        role = source_selection["primary_role"]
         primary_reference = _source_candidates(catalogues[role], item) if role in catalogues else []
-        summary_meta = documents.get("product_summary", {}).get("metadata", {})
-        report_meta = documents.get(role, {}).get("metadata", {})
-        summary_interval = _metadata_date_interval(summary_meta, "compiled_date_interval", "compiled_date")
-        report_interval = _metadata_date_interval(report_meta, "sent_date_interval", "sent_date")
-        primary_source_eligibility = "ELIGIBLE"
-        eligibility_reason = None
-        if role in {"periodic_report", "annual_report"} and historical and (not summary_interval or not report_interval):
-            primary_source_eligibility = "DATE_UNCONFIRMED"
-            eligibility_reason = "概要编制日期或定期报告送出日期无法确认。"
-            primary_reference = []
-            warnings.append(f"{role} 日期无法确认，未作为概要历史口径依据。")
-        elif role in {"periodic_report", "annual_report"} and historical and report_interval[0] > summary_interval[1]:
-            primary_source_eligibility = "AFTER_TARGET_DATE"
-            eligibility_reason = "定期报告送出日晚于概要编制日期。"
-            primary_reference = []
-            warnings.append(f"{role} 送出日晚于概要编制日，历史口径下不作为有效来源。")
-        fallback = item.get("fallback_source") or {}
-        fallback_role = fallback.get("role")
+        planned_fallbacks = (source_selection or {}).get("fallbacks") or []
+        fallback_role = planned_fallbacks[0].get("role") if planned_fallbacks else None
         fallback_candidates = _source_candidates(catalogues[fallback_role], item) if fallback_role in catalogues else []
-        required_subtypes = item.get("primary_source", {}).get("subtypes", [])
-        report_subtype = documents.get(role, {}).get("metadata", {}).get("report_subtype")
-        primary_not_applicable = bool(required_subtypes and report_subtype and report_subtype not in required_subtypes)
-        if primary_not_applicable:
-            primary_reference = []
         item_payload = {
             "item_id": item["item_id"], "key": item["key"], "label": item["label"],
             "module_id": item["module_id"],
-            "excel_row": item.get("excel_row"), "excel_source_cell": item.get("excel_source_cell"), "note": item.get("note"),
-            "meaning": item.get("meaning"),
-            "target_section_path": item.get("target_section_path", []),
-            "business_rule_markdown": item.get("meaning"),
-            "value_type": item.get("value_type"),
-            "period_policy": item.get("period_policy"),
-            "unit_policy": item.get("unit_policy"),
-            "comparison_policy": item.get("comparison_policy"),
-            "amount_period": item.get("amount_period"),
-            "terms": item.get("terms", []),
-            "section_hints": item.get("section_hints", []),
-            "section_hints_by_role": item.get("section_hints_by_role", {}),
+            "meaning": item.get("business_rule_markdown"),
+            "business_rule_markdown": item.get("business_rule_markdown"),
+            "execution_plan": execution_plan,
             "primary_role": role,
             "fallback_role": fallback_role,
-            "fallback_when": item.get("fallback_when", []),
-            "primary_source_eligibility": primary_source_eligibility,
-            "primary_source_eligibility_reason": eligibility_reason,
-            "primary_lookup_status": primary_source_eligibility if primary_source_eligibility != "ELIGIBLE" else "CANDIDATES_FOUND" if primary_reference else "NO_CANDIDATES_UNCONFIRMED",
-            "primary_not_applicable": primary_not_applicable,
+            "document_metadata": _metadata_facts_for_roles(documents, {target_role, role}),
+            "metadata_refs": sorted(_available_metadata_reference_ids(documents, {target_role, role})),
+            "planned_fallbacks": planned_fallbacks,
+            "source_selection": source_selection,
+            "primary_lookup_status": "CANDIDATES_FOUND" if primary_reference else "NO_CANDIDATES_UNCONFIRMED",
             "summary_candidates": primary,
             "primary_candidates": primary_reference,
             "fallback_candidates": fallback_candidates,
         }
-        for side, source_role in (("summary", "product_summary"), ("primary", role), ("fallback", fallback_role)):
+        for side, source_role in (("summary", target_role), ("primary", role), ("fallback", fallback_role)):
             catalogue = catalogues.get(source_role, {})
             plan = _context_plan(catalogue, item_payload[f"{side}_candidates"], item=item_payload)
             item_payload[f"{side}_context_plan"] = plan
@@ -938,46 +1047,36 @@ async def compare_product_summary(
     if trace:
         trace({"kind": "artifact", "path": "comparison/chapter_plan.json", "content": [
             {"item_id": item["item_id"], "label": item["label"], "module_id": item["module_id"],
-             "target_section_path": item["target_section_path"],
+             "target_section_path": item["execution_plan"]["search_intent"].get("preferred_sections_by_role", {}).get(
+                 item["execution_plan"]["target_role"],
+                 item["execution_plan"]["search_intent"].get("preferred_sections", []),
+             ),
              "sources": {side: {"role": role,
                                 "chapters": [{key: section[key] for key in ("section_id", "title", "path")}
                                              for section in _prescribed_sections(catalogues.get(role, {}), item)],
                                 "planned_batches": len(item[f"{side}_context_plan"]["batches"]),
                                 "source_count": item[f"{side}_context_plan"]["source_count"]}
-                         for side, role in (("summary", "product_summary"), ("primary", item["primary_role"]),
+                         for side, role in (("summary", item["execution_plan"]["target_role"]), ("primary", item["primary_role"]),
                                             ("fallback", item["fallback_role"]))}}
             for item in items]})
     if progress:
         progress("primary_lookup", "running", "初步定位完成，正在核实候选未命中的指标")
 
     system = (
-        "你是基金产品资料核对助手。只根据给定原文证据判断字段含义和一致性。"
-        "target_section_path是指标的章节定位路径，label才是待提取业务字段；不得把章节名当成核对值。同章多个指标共享原文，但分别确认各自标签、数值和口径。"
-        "若输入含context_pool，从sources与logical_units/tables共享池读取该指标allowed_*_ids指定的内容；每项只能引用其allowed_summary_source_ids、allowed_primary_source_ids或allowed_fallback_source_ids列出的原始source_id，不能借用同批其他指标的范围。没有共享池时读取该项candidates和logical_units。"
-        "必须逐项返回所有 item_id，不能使用Excel行号识别指标。先只检查主要定期报告证据。只有相关完整章节已检查且明确确认字段未披露时才返回 SOURCE_MISSING；候选未命中、证据不足、输出漏项或引用失败都必须返回 UNRESOLVED。主要来源存在有效证据时必须以其比较，即使结果不一致也不能改用补充文件。只能引用输入中存在的 source_id，不得编造文字、来源或坐标。"
-        "value只能填写被引用原文直接支持的字段值或必要的规范化值，不能把推导的日期、期间或解释拼进value；解释放在reason。每个数值、日期和代码都必须能在对应引用原文中完整找到。"
-        "相同数字若业务身份不同不能认定一致；费率、金额、代码、日期需保持字段角色。role_aware_identifier以概要实际列出的份额及代码角色为核对范围，允许同义标签：同一基金、同一份额范围明确且无角色冲突时，通用基金代码可对应报告主代码或相应交易代码，不因标签不同就UNRESOLVED。概要列出前端/后端等多个目标角色时须逐项覆盖；仅对上主代码不能推断整组代码一致，也不能把别的份额代码补成缺失编号。"
-        "每项都提供业务含义、值类型、期间、单位和比较策略，必须按该规则核对。current_identity表示核对当前产品身份；applicable_at_summary_compilation要求依据在概要编制时已适用；same_period要求两侧期间相同。annual_rate只比较年费率，不得拿费率与实际费用金额比较；same_currency_amount_and_period要求币种、期间和费用性质都一致，任何一项不明确即UNRESOLVED。"
-        "单位策略要求保留原单位或按规则归一，不得因为数字碰巧相同就忽略元/万元或比例/金额差别。"
-        "金额项目另须返回comparison_basis对象，same_period、same_nature、same_unit分别表示期间、费用性质（如年度预估或本期实际发生）、币种及单位可比性，仅在原文或给定日期有依据时填true；不同填false，未知填null。三项不是全部true时，金额比较状态只能为UNRESOLVED，不得填写MATCH或MISMATCH。非金额项目可不填。"
-        "annual_rate按约定年费率百分比核对：可用主报告与概要的费用项目、适用对象相同，百分比相等且两侧未提示变更，可判披露值MATCH，不额外要求报告期末等于概要编制日。固定比例/固定费率与按净资产约定年费率计提可以对应，基数每日变化不代表年费率浮动。"
-        "核对的是两份文件披露的字段内容，不是证明报告期后未发生任何变化。身份及字段角色明确、两侧披露值相同且没有变更或离任等冲突证据时，可判披露内容MATCH；文件日期不同本身不构成待确认理由。任职起始日等历史事实只需确认同一人员、同一基金及同一事件，不能要求报告期覆盖概要编制日。"
-        "若时点敏感字段的两侧值不同，且概要编制日与定期报告截止日不同，必须确认目标信息的生效日或报告期适用范围。主报告较早、原文未证明新旧口径针对同一时点时，不能仅因两侧值不同判MISMATCH，应返回UNRESOLVED并说明缺少的时点依据；只有确认同一适用时点或存在明确互斥披露时才可判差异。费用金额仍须按same_period和费用性质判断，不得因数值相同忽略期间或口径。"
-        "只有字段在概要和至少一个指定来源中都能找到时才比较。字段在一侧或两侧均未披露时，对该来源返回 SOURCE_MISSING，不得据此判差异；证据存在但无法确认或引用时返回 UNRESOLVED。primary_not_applicable为true时，禁止比较该定期报告，只提取概要侧目标事实并将主来源标为SOURCE_MISSING/NOT_APPLICABLE。"
-        "来源条目包含source_id、page、bbox、raw_text。logical_units或table_context中的Markdown/HTML是本项目经完整性验证的PDF几何恢复结构，仅供理解完整表格行列与跨页续接关系；引用仍必须使用原始source_id，不能把unit_id或Markdown文字作为来源ID。必须结合原文与行列关系绑定字段和值，禁止错配同一行其他字段。"
-        "字段标签和值分开时，必须同时引用包含标签与对应值的原始source_id。代码字段按规则匹配实际基金份额/交易代码，不把一组主代码和前后端代码拼成单一值。"
-        "文本可做语义等价判断，但保留否定、比例、限制条件和适用对象。MISMATCH必须有主要来源的明确反向陈述或互斥事实作为证据；来源只披露概括内容、没有复述目标中的附加限定/数值/条件，不足以判MISMATCH，应返回UNRESOLVED并说明未被主来源覆盖。不得把‘没有披露’推断成‘披露相反’。"
-        "严格按 JSON 返回，不要输出 Markdown。"
+        "你是文档核对的通用事实抽取器。业务含义、来源次序、范围、比较要求和待复核条件只来自每个项目携带的中文规则及其执行计划；不得从历史习惯或其他项目推导业务政策。"
+        "只使用输入提供的章节、来源记录和逻辑表上下文。来源记录的source_id是唯一可引用依据；不得编造或改写来源ID、原文或坐标。跨页逻辑单元仅用于理解上下文，引用仍须指向原始source_id。"
+        "filename_date_*是从文件名开头规范日期读取的独立候选元数据，不等同PDF内文日期；仅在对应中文规则允许、且与文件内容相容时作为辅助依据，并用metadata_refs引用，不能覆盖PDF内文中的相反日期。version_date_*是预检根据PDF内可确认版本日期或符合PDF日期范围的文件名日期归并出的招募说明书版本日期事实；仅在该项中文规则允许使用版本日期时引用，并用metadata_refs引用。"
+        "日期条件须按规则声明的精度比较。若规则允许日期精确到日并规定同日可用，且两日期元数据均精确到日、日期值相同，则该日期条件为CLEAR；不得因缺少日内时分或无法推断先后而标UNRESOLVED。若日期精度不同、值不同或存在相反原文证据，仍按中文规则处理。"
+        "逐项返回输入中的item_id。字段值必须由所引用的原文直接支持；标签和值分开时应引用能共同证明二者关系的来源记录。候选未命中、证据不足、分包未覆盖或引用无法核实，都不能当作确认未披露。"
+        "如果某规则的comparison.fields声明多个字段，逐个按字段标签和值对应关系核对；所有必需字段一致才可总体MATCH，确认任一必需字段冲突才可总体MISMATCH，否则UNRESOLVED。"
+        "逐条检查执行计划review_conditions中的每个复核条件，并按原顺序返回review_condition_assessments。复核条件由PDF原文支持时标CLEAR并提供有效source_ids；复核条件由输入提供的结构化文档元数据支持时标CLEAR，并在metadata_refs中引用准确的‘文档角色.字段名’，例如periodic_report.sent_date；元数据中的*_quote字段是该元数据事实对应的PDF原文引文。两者都可提供。metadata_refs只能引用当前输入中实际提供的字段。严禁在source_ids与metadata_refs都为空时标CLEAR；无法给出有效引用时必须改标UNRESOLVED。若条件仅由已提供且可引用的文档元数据决定，不得仅因其不是普通source_id而标REVIEW_REQUIRED。该条件明确属于本次未采用的来源或未发生的流程分支时标NOT_APPLICABLE，source_ids和metadata_refs均留空并说明分支依据；条件触发或证据不足分别使用REVIEW_REQUIRED或UNRESOLVED。不得把‘未发现相关信息’当作条件已满足。只要任一复核条件既非CLEAR也非NOT_APPLICABLE，适用性必须为UNRESOLVED，比较结论不得为MATCH或MISMATCH。"
+        "目标事实和参考事实均须分别提取；仅在执行计划声明的比较要求得到证据支持时，才返回MATCH或MISMATCH。明确缺失、证据不足及无法判断应使用不同状态并说明原因。"
+        "严格按提示给出的JSON结构返回，不要输出Markdown。"
     )
-    document_dates = {role: {key: doc.get("metadata", {}).get(key) for key in (
-        "compiled_date", "compiled_date_interval", "compiled_date_quote", "period_end", "period_end_interval",
-        "period_end_quote", "sent_date", "sent_date_interval", "sent_date_quote", "date_interval", "date_label", "report_subtype",
-    ) if doc.get("metadata", {}).get(key) is not None} for role, doc in documents.items()}
-    system += "\n程序预检确认的文档时点如下。缺失日期不得推断为相同，所选报告可用不代表所有时点敏感字段都能跨期判差异：\n" + json.dumps(document_dates, ensure_ascii=False)
     if trace:
         trace({"kind": "artifact", "path": "comparison/model_system_prompt.txt", "content": system})
     schema = {
-        "items": [{"item_id": "stable-rule-id", "summary_value": "原文值或摘要", "summary_source_ids": [], "references": [{"role": "primary role", "status": "MATCH|MISMATCH|UNRESOLVED|SOURCE_MISSING", "value": "原文值或摘要", "source_ids": [], "comparison_basis": {"same_period": None, "same_nature": None, "same_unit": None}, "reason": "简短依据"}], "reason": "简短依据"}]
+        "items": [{"item_id": "stable-rule-id", "summary_value": "原文值或摘要", "summary_source_ids": [], "references": [{"role": "declared reference role", "status": "MATCH|MISMATCH|UNRESOLVED|SOURCE_MISSING", "applicability_status": "CONFIRMED|NOT_REQUIRED|UNRESOLVED", "coverage_status": "COMPLETE|PARTIAL|NOT_FOUND|UNKNOWN", "uncovered_aspects": [], "review_condition_assessments": [{"condition_index": 0, "status": "CLEAR|NOT_APPLICABLE|REVIEW_REQUIRED|UNRESOLVED", "source_ids": [], "metadata_refs": [], "reason": "简短依据"}], "value": "原文值或摘要", "source_ids": [], "reason": "简短依据"}], "reason": "简短依据"}]
     }
     # Extract every available target fact even when lexical matching found no
     # primary-reference candidate. Source routing happens afterward; otherwise a
@@ -985,10 +1084,8 @@ async def compare_product_summary(
     eligible_items = [
         item for item in items
         if item["summary_candidates"]
-        and (item["primary_source_eligibility"] == "ELIGIBLE" or item["primary_not_applicable"])
     ]
     groups = module_groups(eligible_items)
-    row_to_item_id = {int(item["excel_row"]): item["item_id"] for item in items if item.get("excel_row") is not None}
     known_item_ids = {item["item_id"] for item in items}
     started = time.monotonic()
 
@@ -1009,11 +1106,11 @@ async def compare_product_summary(
                                   if ref.get("role") == item["primary_role"]), {})
                 primary_fact = _verified_fact(reference.get("value"), reference.get("source_ids"),
                                               item["primary_candidates"], item)
-                if target and (primary_fact or item["primary_not_applicable"]):
+                if target and primary_fact:
                     continue
                 payload = {key: item[key] for key in (
-                    "item_id", "key", "label", "target_section_path", "business_rule_markdown", "value_type", "period_policy",
-                    "unit_policy", "comparison_policy", "amount_period", "terms", "primary_role", "primary_not_applicable",
+                    "item_id", "key", "label", "business_rule_markdown", "execution_plan",
+                    "primary_role", "document_metadata", "metadata_refs",
                 )}
                 payload.update({"verified_target": target, "verified_primary_reference": primary_fact,
                                 "fallback_candidates": [], "context_round": round_index + 1})
@@ -1034,11 +1131,9 @@ async def compare_product_summary(
             for batch_index, batch in enumerate(_payload_batches(requests)):
                 shared = _shared_context(batch)
                 prompt = (
-                    f"按当前主题逐项处理本组 {len(batch)} 个核对项，必须完整返回每个item_id。"
-                    "当前包包含完整章节或显式逻辑单元；context_round及coverage说明分包范围，未提供单元不代表未披露。"
-                    "verified_target和verified_primary_reference是已验证锁定事实，必须原样保留其值和source_id，不得重提或改写。"
-                    "某项primary_candidates为空时，仍须单独提取概要事实；无已验证主来源时返回UNRESOLVED。不得使用补充来源。"
-                    "只比较本组字段，不得因当前包未命中返回SOURCE_MISSING。\nJSON结构：\n"
+                    f"逐项处理本组 {len(batch)} 个核对项，完整返回每个item_id。业务含义、来源要求和比较方法仅依据该项中文规则与执行计划。"
+                    "当前包的coverage说明分包范围；未提供的单元不代表未披露。已核验的verified_target和verified_primary_reference是锁定事实，必须原样保留。"
+                    "候选未命中、证据不足或引用无法核验时返回UNRESOLVED，不得推断为未披露。\nJSON结构：\n"
                     + json.dumps(schema, ensure_ascii=False) + "\n字段与证据包：\n"
                     + json.dumps(shared if "context_pool" in shared else batch, ensure_ascii=False)
                 )
@@ -1053,7 +1148,7 @@ async def compare_product_summary(
                         if trace:
                             trace({"kind": "artifact", "path": f"comparison/{stage}/model_response.txt", "content": response})
                         for value in _parse_json(response).get("items", []):
-                            found = _normalize_model_item_id(value, row_to_item_id) if isinstance(value, dict) else None
+                            found = _normalize_model_item_id(value) if isinstance(value, dict) else None
                             request = next((request for request in batch if found and request["item_id"] == found["item_id"]), None)
                             if not request:
                                 continue
@@ -1130,7 +1225,7 @@ async def compare_product_summary(
             preferred_summary_ids = summary_ids if not summary_valid else []
             preferred_primary_ids = primary_ids if not primary_valid else []
             recovery_items.append({
-                key: item[key] for key in ("item_id", "key", "label", "primary_role", "business_rule_markdown", "terms")
+                key: item[key] for key in ("item_id", "key", "label", "primary_role", "business_rule_markdown", "execution_plan")
             } | {
                 "failed_sides": [side for side, valid in (("target", summary_valid), ("primary_reference", primary_valid)) if not valid],
                 "summary_candidates": _recovery_candidates(item, "summary", preferred_summary_ids) if not summary_valid else [],
@@ -1147,7 +1242,7 @@ async def compare_product_summary(
         recovery_prompt = (
             "只恢复failed_sides列出的失败侧字段证据。verified_target或verified_primary_reference存在时视为锁定事实，必须原样保留其中值和source_id，不能重新提取或改写。候选包含原文、bbox和完整逻辑单元；标签和值可能分处不同单元格或不同行，必须引用标签与对应值的原始source_id，不能选择相邻的其他指标。"
             "恢复后有有效事实即可返回；事实无法确认则保持该侧空值，并将比较状态设为UNRESOLVED。禁止返回SOURCE_MISSING或确认未披露。不得查看补充招募说明书。"
-            "金额项目仍须给出comparison_basis的same_period、same_nature、same_unit。严格返回JSON：{\"items\":[{\"item_id\":\"stable-rule-id\",\"summary_value\":\"\",\"summary_source_ids\":[],\"primary_value\":\"\",\"primary_source_ids\":[],\"comparison_status\":\"MATCH|MISMATCH|UNRESOLVED\",\"comparison_basis\":{},\"reason\":\"\"}]}\n"
+            "只恢复规则声明的目标事实、参考事实和比较状态；引用值必须由对应原文直接支持。严格返回JSON：{\"items\":[{\"item_id\":\"stable-rule-id\",\"summary_value\":\"\",\"summary_source_ids\":[],\"primary_value\":\"\",\"primary_source_ids\":[],\"comparison_status\":\"MATCH|MISMATCH|UNRESOLVED\",\"reason\":\"\"}]}\n"
             + json.dumps(_shared_context(recovery_batch), ensure_ascii=False)
         )
         if trace:
@@ -1160,7 +1255,7 @@ async def compare_product_summary(
                 trace({"kind": "artifact", "path": f"comparison/evidence_recovery/batch_{recovery_index}/model_response.txt", "content": recovery_raw})
             recovered = _parse_json(recovery_raw).get("items", [])
             recovered_by_id = {normalized["item_id"]: normalized for value in recovered if isinstance(value, dict)
-                               if (normalized := _normalize_model_item_id(value, row_to_item_id)) is not None
+                               if (normalized := _normalize_model_item_id(value)) is not None
                                and normalized.get("item_id") in known_item_ids}
             recovery_input_by_id = {item["item_id"]: item for item in recovery_batch}
             for item_id in {item["item_id"] for item in recovery_batch}:
@@ -1175,7 +1270,7 @@ async def compare_product_summary(
                 summary_ids = (locked_target.get("source_ids") if locked_target else
                                found.get("summary_source_ids") if isinstance(found.get("summary_source_ids"), list) else [])
                 summary_allowed = set(locked_target["source_ids"]) if locked_target else {source["source_id"] for source in recovery_input["summary_candidates"]}
-                summary_evidence = [valid_sources[source_id] for source_id in summary_ids if source_id in valid_sources and source_id in summary_allowed and valid_sources[source_id]["document_role"] == "product_summary"]
+                summary_evidence = [valid_sources[source_id] for source_id in summary_ids if source_id in valid_sources and source_id in summary_allowed and valid_sources[source_id]["document_role"] == item["execution_plan"]["target_role"]]
                 summary_value = str((locked_target or {}).get("value") or found.get("summary_value") or "")
                 primary_ids = (locked_primary.get("source_ids") if locked_primary else
                                found.get("primary_source_ids") if isinstance(found.get("primary_source_ids"), list) else [])
@@ -1207,7 +1302,7 @@ async def compare_product_summary(
                 raw_model_items.append({
                     "item_id": item_id, "summary_value": summary_value, "summary_source_ids": summary_ids,
                     "references": [{"role": item["primary_role"], "status": status, "value": primary_value,
-                                    "source_ids": primary_ids, "comparison_basis": found.get("comparison_basis"),
+                                    "source_ids": primary_ids,
                                     "reason": str(found.get("reason") or "经局部证据恢复确认。" )}],
                     "reason": str(found.get("reason") or "经局部证据恢复确认。"),
                 })
@@ -1223,7 +1318,7 @@ async def compare_product_summary(
         value["item_id"]
         for value in raw_model_items
         if value.get("item_id") in known_item_ids
-        and any(ref.get("role") == "periodic_report" and ref.get("status") == "SOURCE_MISSING"
+        and any(ref.get("role") == item_by_id[value["item_id"]]["primary_role"] and ref.get("status") == "SOURCE_MISSING"
                 for ref in value.get("references", []) if isinstance(ref, dict))
     }
     unresolved_primary_ids = set(known_item_ids) - raw_model_ids
@@ -1233,7 +1328,7 @@ async def compare_product_summary(
             continue
         rule = rule_by_id[item_id]
         refs = [ref for ref in value.get("references", [])
-                if isinstance(ref, dict) and ref.get("role") == rule["primary_source"]["role"]]
+                if isinstance(ref, dict) and ref.get("role") == item_by_id[item_id]["primary_role"]]
         ref = refs[0] if refs else {}
         source_ids = ref.get("source_ids") if isinstance(ref.get("source_ids"), list) else []
         allowed_ids = {source["source_id"] for source in item_by_id[item_id]["primary_candidates"]}
@@ -1246,11 +1341,15 @@ async def compare_product_summary(
         if not valid_fact:
             unresolved_primary_ids.add(item_id)
     missing_primary_items = [item for item in items if item["summary_candidates"]
-                             and item["primary_source_eligibility"] == "ELIGIBLE"
-                             and not item["primary_not_applicable"]
                              and item["item_id"] in (unresolved_primary_ids | source_missing_ids)]
     if missing_primary_items:
-        report_catalogue = catalogues.get("periodic_report", {})
+        primary_roles = {item["primary_role"] for item in missing_primary_items}
+        if len(primary_roles) != 1:
+            raise ValueError("SUMMARY_PRIMARY_ROUTING_REQUIRES_ROLE_BATCHING")
+        report_role = next(iter(primary_roles))
+        report_catalogue = catalogues.get(report_role, {})
+        if not report_catalogue:
+            raise ValueError(f"SUMMARY_PRIMARY_SOURCE_MISSING: {report_role}")
         section_directory = _chapter_directory(report_catalogue)
         section_by_id = {section["section_id"]: section for section in section_directory}
         report_sources = {source["source_id"]: source for page in report_catalogue.get("pages", [])
@@ -1267,14 +1366,14 @@ async def compare_product_summary(
                                     item["summary_candidates"], item)
             route_requests.append({"item_id": item["item_id"], "label": item["label"],
                                    "business_rule": item["business_rule_markdown"],
-                                   "section_hints": item["section_hints_by_role"].get(item["primary_role"], []),
+                                   "execution_plan": item["execution_plan"],
                                    "verified_target": target})
         directory_pages = _payload_batches([{key: value for key, value in section.items() if key != "source_ids"}
                                            for section in section_directory], budget=18_000)
         for directory_index, directory in enumerate(directory_pages):
             for requests in _payload_batches(route_requests, budget=18_000):
                 route_prompt = (
-                    "你负责为未定位的核对项选择定期报告中的完整章节。根据指标含义、预设章节提示和章节标题选择可能披露该指标的section_id，最多8个。"
+                    "你负责为未定位的核对项选择参考文件中的完整章节。根据该项中文规则、执行计划和章节标题选择可能披露该事实的section_id，最多8个。"
                     "本次仅提供目录的一部分，未出现不代表未披露；不能输出目录外ID。只做路由，不提取事实、不比较、不确认缺失。"
                     "没有把握时返回空数组。严格返回JSON：{\"items\":[{\"item_id\":\"stable-rule-id\",\"section_ids\":[],\"reason\":\"\"}]}\n"
                     + json.dumps({"items": requests, "sections": directory, "directory_batch": directory_index + 1,
@@ -1286,7 +1385,7 @@ async def compare_product_summary(
                                "content": {"prompt": route_prompt}})
                     response = await _generate_model_text(provider, system, route_prompt, stage="primary_section_routing", trace=trace)
                     for route in _parse_json(response).get("items", []):
-                        found = _normalize_model_item_id(route, row_to_item_id) if isinstance(route, dict) else None
+                        found = _normalize_model_item_id(route) if isinstance(route, dict) else None
                         if not found or found.get("item_id") not in {request["item_id"] for request in requests}:
                             continue
                         ids = route.get("section_ids") if isinstance(route.get("section_ids"), list) else []
@@ -1324,18 +1423,19 @@ async def compare_product_summary(
                 target = _verified_fact(previous.get("summary_value"), previous.get("summary_source_ids"), item["summary_candidates"], item)
                 packet = search["packets"][round_index]
                 requests.append({"item_id": item_id, "label": item["label"], "business_rule": item["business_rule_markdown"],
+                                 "execution_plan": item["execution_plan"],
                                  "verified_target": target, "summary_candidates": [] if target else _recovery_candidates(item, "summary"),
                                  "selected_sections": [packet["section_path"]], "primary_candidates": packet["candidates"],
                                  "logical_units": packet["logical_units"], "table_context": packet.get("table_context", []),
                                  "section_batch": packet["section_batch"], "section_batch_count": packet["section_batch_count"],
-                                 "coverage_complete": True})
+                                 "routed_batch_index": round_index + 1, "routed_batch_count": len(search["packets"])})
             for request_batch in _payload_batches(requests):
                 lookup_prompt = (
                     "仅检查每项列出的完整章节原文或完整逻辑单元。verified_target存在时是锁定事实，禁止重新提取或修改，summary_candidates为空是正常情况。"
                     "找到字段返回FOUND；当前包未披露返回NOT_FOUND_IN_SCOPE；字段身份或证据不清返回UNRESOLVED。"
                     "分包未命中不代表整章或全文未披露，程序会在所有分包检查后汇总覆盖。标签和值可跨页，必须引用原始source_id。"
-                    "primary_value只能写引用直接支持的字段值；期间或适用性说明写reason。金额项目仍须给出comparison_basis的same_period、same_nature、same_unit。不要查看招募说明书。严格返回JSON："
-                    "{\"items\":[{\"item_id\":\"stable-rule-id\",\"summary_value\":\"\",\"summary_source_ids\":[],\"primary_status\":\"FOUND|NOT_FOUND_IN_SCOPE|UNRESOLVED\",\"primary_value\":\"\",\"primary_source_ids\":[],\"comparison_status\":\"MATCH|MISMATCH|UNRESOLVED\",\"comparison_basis\":{},\"reason\":\"\"}]}\n"
+                    "只按执行计划指向的参考文档角色查找，并遵循该项中文规则。未完整检查所有分包/章节前不能确认未披露。逐条返回执行计划中的全部复核条件；若条件只针对未采用的来源或流程分支，标NOT_APPLICABLE并说明原因；CLEAR必须引用支持条件判断的source_id。不要比较候选以外内容。严格返回JSON："
+                    "{\"items\":[{\"item_id\":\"stable-rule-id\",\"summary_value\":\"\",\"summary_source_ids\":[],\"primary_status\":\"FOUND|CONFIRMED_ABSENT|UNRESOLVED\",\"primary_value\":\"\",\"primary_source_ids\":[],\"applicability_status\":\"CONFIRMED|NOT_REQUIRED|UNRESOLVED\",\"coverage_status\":\"COMPLETE|PARTIAL|UNKNOWN\",\"uncovered_aspects\":[],\"review_condition_assessments\":[{\"condition_index\":0,\"status\":\"CLEAR|NOT_APPLICABLE|REVIEW_REQUIRED|UNRESOLVED\",\"source_ids\":[],\"metadata_refs\":[],\"reason\":\"\"}],\"comparison_status\":\"MATCH|MISMATCH|UNRESOLVED\",\"reason\":\"\"}]}\n"
                     + json.dumps(_shared_context(request_batch), ensure_ascii=False)
                 )
                 try:
@@ -1344,7 +1444,7 @@ async def compare_product_summary(
                                "content": {"prompt": lookup_prompt}})
                     response = await _generate_model_text(provider, system, lookup_prompt, stage="primary_section_lookup", trace=trace)
                     found_by_id = {found["item_id"]: found for value in _parse_json(response).get("items", []) if isinstance(value, dict)
-                                   if (found := _normalize_model_item_id(value, row_to_item_id)) is not None}
+                                   if (found := _normalize_model_item_id(value)) is not None}
                     for request in request_batch:
                         item_id = request["item_id"]
                         search = searches[item_id]
@@ -1363,9 +1463,9 @@ async def compare_product_summary(
                             search["absent"] += 1
                         if found.get("primary_status") == "FOUND" and primary:
                             search["found"] = True
-                            status = found.get("comparison_status")
-                            reference = {"role": item["primary_role"], "status": status if status in {"MATCH", "MISMATCH"} else "UNRESOLVED",
-                                         **primary, "comparison_basis": found.get("comparison_basis"), "reason": found.get("reason", "")}
+                            reference = _primary_lookup_reference(
+                                item, found, primary, coverage_complete=False,
+                            )
                         else:
                             reference = next((ref for ref in previous.get("references", []) if ref.get("role") == item["primary_role"]),
                                              {"role": item["primary_role"], "status": "UNRESOLVED", "value": "", "source_ids": []})
@@ -1387,6 +1487,15 @@ async def compare_product_summary(
             coverage["coverage_complete"] = (bool(search["packets"]) and not coverage["unexamined_units"]
                                               and not search["failed"] and coverage["requests"] == len(search["packets"]))
             if search["found"]:
+                previous = next((value for value in raw_model_items if value.get("item_id") == item_id), {})
+                refs = previous.get("references", [])
+                for ref in refs:
+                    if isinstance(ref, dict) and ref.get("role") == item["primary_role"]:
+                        ref["coverage_status"] = "COMPLETE" if coverage["coverage_complete"] else "PARTIAL"
+                        if not coverage["coverage_complete"] and not ref.get("uncovered_aspects"):
+                            ref["uncovered_aspects"] = ["选定章节仍有未检查的分包或逻辑单元。"]
+                raw_model_items = [value for value in raw_model_items if value.get("item_id") != item_id]
+                raw_model_items.append(previous)
                 continue
             previous = next((value for value in raw_model_items if value.get("item_id") == item_id), {})
             absent = coverage["coverage_complete"] and search["absent"] == len(search["packets"])
@@ -1423,7 +1532,6 @@ async def compare_product_summary(
         rule_input = rule_inputs[item_id]
         value = raw_items.get(item_id, {})
         fallback_role = rule_input["fallback_role"]
-        not_applicable = rule_input["primary_not_applicable"]
         primary_ref = next((ref for ref in value.get("references", [])
                             if isinstance(ref, dict) and ref.get("role") == rule_input["primary_role"]), {})
         primary_status = primary_ref.get("status")
@@ -1438,21 +1546,49 @@ async def compare_product_summary(
             and _numbers_are_grounded(str(primary_ref.get("value") or ""), primary_evidence)
             and _field_evidence_is_substantive(rule, primary_evidence)
         )
-        fallback_reason = _fallback_trigger_reason(
-            rule, rule_input["fallback_when"],
-            lookup_override=value.get("primary_lookup_status_override"),
-            primary_not_applicable=not_applicable,
-            primary_fact_verified=primary_fact_verified,
+        primary_coverage_status = primary_ref.get("coverage_status")
+        if primary_coverage_status not in {"COMPLETE", "PARTIAL", "NOT_FOUND", "UNKNOWN"}:
+            primary_coverage_status = "UNKNOWN"
+        lookup_override = value.get("primary_lookup_status_override")
+        target_role = rule_input["execution_plan"]["target_role"]
+        primary_state = lookup_override or ("FOUND" if primary_fact_verified else "UNRESOLVED")
+        primary_applicability = primary_ref.get("applicability_status", "UNRESOLVED")
+        target_role = rule_input["execution_plan"]["target_role"]
+        target_document = documents.get(target_role, {})
+        primary_document = documents.get(rule_input["primary_role"], {})
+        primary_context_ok, primary_context_assessments = evaluate_declared_context(
+            rule_input["execution_plan"], target_document, primary_document,
+            reference_role=rule_input["primary_role"],
         )
+        if not primary_context_ok:
+            primary_applicability = "UNRESOLVED"
+        source_facts = {
+            "primary.status": primary_state,
+            "primary.coverage": primary_coverage_status,
+            "primary.applicability": primary_applicability,
+            "scope.fund_identity": documents.get(rule_input["primary_role"], {}).get("metadata", {}).get("fund_code"),
+            "scope.period": documents.get(rule_input["primary_role"], {}).get("metadata", {}).get("period_end"),
+            "scope.fact_nature": primary_ref.get("fact_nature"),
+            "scope.unit": primary_ref.get("unit"),
+            "scope.effective_time": primary_applicability,
+            "target.scope.fund_identity": documents.get(target_role, {}).get("metadata", {}).get("fund_code"),
+            "target.scope.period": documents.get(target_role, {}).get("metadata", {}).get("period_end"),
+            "target.scope.fact_nature": primary_ref.get("fact_nature"),
+            "target.scope.unit": primary_ref.get("unit"),
+            "target.scope.effective_time": primary_applicability,
+        }
+        eligible_sources = eligible_fallbacks(
+            {"source_selection": rule_input["source_selection"]}, source_facts,
+        )
+        fallback_reason = "规则声明的补充来源条件已满足。" if eligible_sources else None
+        fallback_role = eligible_sources[0]["role"] if eligible_sources else None
+        fallback_mode = eligible_sources[0]["mode"] if eligible_sources else None
         triggered = fallback_reason is not None
-        if rule_input["primary_source_eligibility"] != "ELIGIBLE":
-            fallback_outcomes[item_id] = {"status": "NOT_TRIGGERED", "reason": rule_input["primary_source_eligibility_reason"]}
-            continue
-        if not triggered or not fallback_role or not rule_input["fallback_when"]:
-            fallback_outcomes[item_id] = {"status": "NOT_TRIGGERED", "reason": "主要来源尚未确认未披露。"}
+        if not triggered or not fallback_role:
+            fallback_outcomes[item_id] = {"status": "NOT_TRIGGERED", "reason": "规则声明的来源切换条件尚未满足。"}
             continue
         if fallback_role not in documents:
-            fallback_outcomes[item_id] = {"status": "NOT_PROVIDED", "reason": "规则允许补充该指标，但本任务未上传招募说明书。"}
+            fallback_outcomes[item_id] = {"status": "NOT_PROVIDED", "reason": f"规则允许补充来源“{fallback_role}”，但本任务未提供该文件。"}
             continue
         if not allowed_fallback_ids[item_id]:
             fallback_outcomes[item_id] = {"status": "NO_CANDIDATES_UNCONFIRMED", "reason": "已触发补充查找，但当前候选不足以确认是否披露。"}
@@ -1463,7 +1599,8 @@ async def compare_product_summary(
 
         summary_ids = value.get("summary_source_ids") if isinstance(value.get("summary_source_ids"), list) else []
         summary_allowed = allowed_summary_ids[item_id]
-        summary_evidence = [valid_sources[source_id] for source_id in summary_ids if source_id in valid_sources and source_id in summary_allowed and valid_sources[source_id]["document_role"] == "product_summary"]
+        target_role = rule_input["execution_plan"]["target_role"]
+        summary_evidence = [valid_sources[source_id] for source_id in summary_ids if source_id in valid_sources and source_id in summary_allowed and valid_sources[source_id]["document_role"] == target_role]
         summary_value = str(value.get("summary_value") or "")
         if (len(summary_evidence) != len(set(summary_ids)) or not summary_evidence
                 or not _numbers_are_grounded(summary_value, summary_evidence)
@@ -1471,9 +1608,6 @@ async def compare_product_summary(
             fallback_outcomes[item_id] = {"status": "UNRESOLVED", "reason": "概要侧目标事实尚未通过证据校验，补充来源不重复提取目标值。"}
             continue
 
-        fallback_date_status, fallback_date_reason = _fallback_source_date_status(
-            rule, documents, fallback_role, historical=historical,
-        )
         plan = rule_input["fallback_context_plan"]
         if not plan["batches"]:
             fallback_outcomes[item_id] = {"status": "UNRESOLVED", "reason": "补充来源逻辑单元超出上下文预算，未检查。",
@@ -1482,30 +1616,51 @@ async def compare_product_summary(
             fallback_requests.append({
             "item_id": item_id, "label": rule["label"], "business_rule_markdown": rule_input["business_rule_markdown"],
             "fallback_role": fallback_role,
-            "fallback_when": rule_input["fallback_when"],
+            "fallback_mode": fallback_mode,
+            "planned_fallbacks": rule_input["planned_fallbacks"],
+            "execution_plan": rule_input["execution_plan"],
             "lookup_basis": fallback_reason,
-            "fallback_date_status": fallback_date_status,
-            "fallback_date_reason": fallback_date_reason,
-            "target_compiled_date": documents.get("product_summary", {}).get("metadata", {}).get("compiled_date"),
-            "fallback_document_date": documents.get(fallback_role, {}).get("metadata", {}).get("date"),
+            "primary_coverage_status": primary_coverage_status,
+            "primary_uncovered_aspects": primary_ref.get("uncovered_aspects", []),
+            "verified_primary_reference": {"value": str(primary_ref.get("value") or ""), "source_ids": primary_ids},
             "verified_target": {"value": summary_value, "source_ids": summary_ids},
+            # Candidate review must see the already-verified target wording,
+            # not only opaque IDs. This lets the model assess source identity,
+            # scope, and applicability without re-extracting or inventing it.
+            "verified_target_candidates": summary_evidence,
             "fallback_candidates": batch["candidates"],
+                "document_metadata": _metadata_facts_for_roles(
+                    documents, {rule_input["execution_plan"].get("target_role"), rule_input.get("primary_role"), fallback_role},
+                ),
+                "metadata_refs": sorted(_available_metadata_reference_ids(
+                    documents, {rule_input["execution_plan"].get("target_role"), rule_input.get("primary_role"), fallback_role},
+                )),
             "logical_units": batch["logical_units"], "table_context": batch.get("table_context", []),
             "coverage": {"coverage_complete": plan["coverage_complete"], "batch_count": len(plan["batches"]),
                          "skipped_unit_count": len(plan["skipped_units"])},
             })
-    for fallback_index, fallback_batch in enumerate(_payload_batches(fallback_requests), start=1):
+    fallback_requests, oversized_fallback_contexts = _merge_fallback_contexts(fallback_requests)
+    for item_id, size in oversized_fallback_contexts.items():
+        fallback_outcomes[item_id] = {
+            "status": "UNRESOLVED",
+            "reason": f"该项相关来源章节合并后超出模型上下文预算（{size} 字符），未分开依据不完整的片段作结论。",
+        }
+    # Fallback items can point at overlapping chapters with different meanings
+    # (for example, a fee list and the fee-rate calculation clauses). Keep each
+    # item in its own request so a model cannot cite a neighboring item's
+    # otherwise-valid source ID. Evidence validation remains item-scoped below.
+    for fallback_index, fallback_batch in enumerate(_isolated_payload_batches(fallback_requests), start=1):
         fallback_batch = [request for request in fallback_batch
                           if fallback_outcomes.get(request["item_id"], {}).get("status") != "FOUND"]
         if not fallback_batch:
             continue
         fallback_prompt = (
-            "按每项已验证目标事实及其Markdown规则，在允许的补充文件中查找同一业务字段。same_contract_annual_rate只允许查同一基金合同的年费率；不得把定期报告里已验证的主来源差异替换掉。不得重新提取、改写verified_target的值或source_id。"
-            "当输入含context_pool时，source_id同时作为context_pool.sources的对象键和来源记录字段；返回的source_ids必须逐字复制该项allowed_fallback_source_ids中的一个或多个值，并能在sources中找到。不得沿用对话历史或自行编造ID；无法确认ID时返回UNRESOLVED。"
-            "只有补充文件版本日期区间明确晚于概要编制日期区间时，才不得用其形成当时适用结论。日期精度为年月等导致区间相交时，不得仅凭区间相交认定来源无效或强制UNRESOLVED；仍须核对同一产品、字段含义、适用对象、原文证据及是否存在变更提示。若版本明确晚于概要编制日期，只能记录原文证据并将comparison_status设为UNRESOLVED。"
-            "候选包含同页bbox坐标。表格标签和值可能分处相邻单元格或不同行，请结合坐标与列关系绑定；必须引用字段标签与对应值的原始source_id。"
-            "找到补充来源时返回FOUND和补充值及source_id；字段身份、适用口径或引用不清时返回UNRESOLVED。金额项目仍须给出comparison_basis的same_period、same_nature、same_unit。严格返回JSON："
-            "{\"items\":[{\"item_id\":\"stable-rule-id\",\"status\":\"FOUND|UNRESOLVED\",\"comparison_status\":\"MATCH|MISMATCH|UNRESOLVED\",\"comparison_basis\":{},\"value\":\"\",\"source_ids\":[],\"reason\":\"\"}]}\n"
+            "按每项的中文规则和执行计划，在规则声明的补充来源中查找目标事实。不得把主来源中已经核实的事实、值或引用改写，也不得用补充来源覆盖主来源明确报告的相反事实。mode=select 表示规则声明的来源切换条件已满足；mode=candidate_review 表示主来源状态尚未确认，需要独立审核补充来源本身是否满足中文规则。candidate_review 不是拒绝使用该来源的标志：若规则允许在主来源未确认时独立核验补充来源，且候选原文、目标原文和适用上下文满足规则要求，应返回 status=FOUND、applicability_status=CONFIRMED，执行器会据此采用该来源；若规则要求先确认主来源缺失，或候选自身适用性无法确认，则返回 UNRESOLVED。不得仅因主来源状态为UNKNOWN或UNRESOLVED就否定一个规则允许独立核验的候选来源，也不得把主来源状态不确定表述成已确认未披露。候选适用性审核仍须依据原文及规则要求确认身份、合同关系、生效时点和口径；只有适用性确认后才可采用。"
+            "顶层source_ids只用于证明value来自本请求的fallback_candidates，必须且只能引用这些补充来源的source_id；不得把verified_target_candidates或verified_primary_reference的source_id混入顶层source_ids。目标侧证据已由执行器预先核验，不需要在顶层重复引用；review_condition_assessments.source_ids则可引用该条件实际需要的目标、主来源或补充来源证据，但只能引用本请求中存在的source_id。引用必须逐字复制该项允许来源中的source_id，并能在来源记录中找到；source_id同时作为context_pool.sources的键和来源记录字段。候选可能分处相邻单元格或跨页逻辑单元，请结合完整上下文绑定标签和值，但只引用原始证据ID。作出‘候选未提供该事实’或‘没有该费率/数据’的结论前，必须检查该项全部fallback_candidates中的raw_text、row_text、cell_text及logical_units；只要其中存在直接支持目标事实的原文，就应引用该source_id并评估适用性，不能声称候选没有提供。"
+            "filename_date_*是从文件名开头规范日期读取的独立候选元数据，不等同PDF内文日期；仅在对应中文规则允许、且与文件内容相容时作为辅助依据，并用metadata_refs引用，不能覆盖PDF内文中的相反日期。version_date_*是预检根据PDF内可确认版本日期或符合PDF日期范围的文件名日期归并出的招募说明书版本日期事实；仅在该项中文规则允许使用版本日期时引用，并用metadata_refs引用。"
+            "日期条件须按规则声明的精度比较。若规则允许日期精确到日并规定同日可用，且两日期元数据均精确到日、日期值相同，则该日期条件为CLEAR；不得因缺少日内时分或无法推断先后而标UNRESOLVED。若日期精度不同、值不同或存在相反原文证据，仍按中文规则处理。"
+            "适用期间、身份、单位、性质及比较口径均依该项中文规则判断；不确定时保持UNRESOLVED。数字、日期、代码等事实值须由引用原文直接支持。"
+            "逐条评估执行计划review_conditions。复核条件由原文支持时标CLEAR并引用source_id；由输入提供的结构化文档元数据支持时标CLEAR，并在metadata_refs中引用准确的‘文档角色.字段名’；只针对未采用来源或未发生流程分支时标NOT_APPLICABLE，source_ids和metadata_refs均留空并说明原因；条件触发或信息不足时分别标REVIEW_REQUIRED或UNRESOLVED。metadata_refs只能引用当前输入中实际提供的字段。严格返回JSON：{\"items\":[{\"item_id\":\"stable-rule-id\",\"status\":\"FOUND|UNRESOLVED\",\"applicability_status\":\"CONFIRMED|NOT_REQUIRED|UNRESOLVED\",\"comparison_status\":\"MATCH|MISMATCH|UNRESOLVED\",\"review_condition_assessments\":[{\"condition_index\":0,\"status\":\"CLEAR|NOT_APPLICABLE|REVIEW_REQUIRED|UNRESOLVED\",\"source_ids\":[],\"metadata_refs\":[],\"reason\":\"\"}],\"value\":\"\",\"source_ids\":[],\"reason\":\"\"}]}\n"
             + json.dumps(_shared_context(fallback_batch), ensure_ascii=False)
         )
         if trace:
@@ -1539,15 +1694,23 @@ async def compare_product_summary(
                         or not _field_evidence_is_substantive(rule_by_id[item_id], evidence)):
                     fallback_outcomes[item_id] = {"status": "UNRESOLVED", "reason": str(response.get("reason") or "补充来源未能确认字段。")}
                     continue
+                applicability_status = response.get("applicability_status", "UNRESOLVED")
+                if request.get("fallback_mode") == "candidate_review" and applicability_status != "CONFIRMED":
+                    fallback_outcomes[item_id] = {
+                        "status": "UNRESOLVED",
+                        "reason": str(response.get("reason") or "候选来源的合同适用性未能确认。"),
+                        "applicability_status": applicability_status,
+                    }
+                    continue
                 target = request["verified_target"]
                 target_evidence = [valid_sources[source_id] for source_id in target["source_ids"]]
                 fallback_outcomes[item_id] = {
                     "status": "FOUND", "reason": "补充来源找到可引用证据。",
+                    "fallback_mode": request.get("fallback_mode", "select"),
                     "comparison_reason": str(response.get("reason") or ""),
                     "comparison_status": response.get("comparison_status"),
-                    "comparison_basis": response.get("comparison_basis"),
-                    "date_status": request["fallback_date_status"],
-                    "date_reason": request["fallback_date_reason"],
+                    "applicability_status": applicability_status,
+                    "review_condition_assessments": response.get("review_condition_assessments"),
                     "value": fallback_value, "evidence": evidence,
                     "citation_binding": (fact or {}).get("citation_binding"),
                     "summary_value": target["value"], "summary_evidence": target_evidence,
@@ -1565,7 +1728,8 @@ async def compare_product_summary(
         primary_role = rule_input["primary_role"]
         fallback_role = rule_input["fallback_role"]
         summary_ids = value.get("summary_source_ids") if isinstance(value.get("summary_source_ids"), list) else []
-        summary_evidence = [valid_sources[source_id] for source_id in summary_ids if source_id in valid_sources and source_id in allowed_summary_ids[item_id] and valid_sources[source_id]["document_role"] == "product_summary"]
+        target_role = rule_input["execution_plan"]["target_role"]
+        summary_evidence = [valid_sources[source_id] for source_id in summary_ids if source_id in valid_sources and source_id in allowed_summary_ids[item_id] and valid_sources[source_id]["document_role"] == target_role]
         summary_value = str(value.get("summary_value") or "")
         if (len(summary_evidence) != len(set(summary_ids)) or not _numbers_are_grounded(summary_value, summary_evidence)
                 or not _field_evidence_is_substantive(rule, summary_evidence)):
@@ -1583,10 +1747,22 @@ async def compare_product_summary(
         if (len(reference_evidence) != len(set(reference_ids)) or not _numbers_are_grounded(reference_value, reference_evidence)
                 or (ref_status != "SOURCE_MISSING" and not _field_evidence_is_substantive(rule, reference_evidence))):
             ref_status, reference_evidence = "UNRESOLVED", []
-        report_meta = documents.get(primary_role, {}).get("metadata", {})
-        required_subtypes = rule.get("primary_source", {}).get("subtypes", [])
-        report_subtype = report_meta.get("report_subtype")
-        primary_not_applicable = rule_input["primary_not_applicable"]
+        # Keep the verified primary-source evidence separate from the eventual
+        # selected reference. A fallback may supplement a partial finding, but
+        # must never erase the evidence and value already found in the report.
+        primary_reference_value = reference_value if reference_evidence else None
+        primary_evidence = list(reference_evidence)
+        primary_coverage_status = ref.get("coverage_status")
+        if primary_coverage_status not in {"COMPLETE", "PARTIAL", "NOT_FOUND", "UNKNOWN"}:
+            primary_coverage_status = "UNKNOWN"
+        primary_uncovered_aspects = ref.get("uncovered_aspects")
+        if not isinstance(primary_uncovered_aspects, list):
+            primary_uncovered_aspects = []
+        primary_uncovered_aspects = [str(aspect).strip() for aspect in primary_uncovered_aspects
+                                     if isinstance(aspect, str) and aspect.strip()][:20]
+        if not primary_evidence:
+            primary_coverage_status = "UNKNOWN"
+            primary_uncovered_aspects = []
         lookup_override = value.get("primary_lookup_status_override")
         if reference_evidence:
             primary_lookup_status = "FOUND"
@@ -1594,63 +1770,63 @@ async def compare_product_summary(
             primary_lookup_status = lookup_override
         elif model_omitted_item:
             primary_lookup_status = "EXTRACTION_FAILED"
-        elif primary_not_applicable:
-            primary_lookup_status = "NOT_APPLICABLE"
         else:
             primary_lookup_status = rule_input["primary_lookup_status"]
-        fallback_lookup = fallback_outcomes.get(item_id, {"status": "NOT_TRIGGERED", "reason": "主要来源尚未确认未披露。"})
-        if lookup_override == "CONFIRMED_ABSENT":
-            primary_lookup_status = "CONFIRMED_ABSENT"
-        elif (ref_status == "SOURCE_MISSING" and lookup_override not in {"NOT_APPLICABLE", "CONFIRMED_ABSENT"}
-              and not primary_not_applicable):
-            # Candidate-level absence is not enough: the bounded full-report
-            # lookup must confirm that the field is genuinely undisclosed.
-            ref_status = "UNRESOLVED"
-            primary_lookup_status = "UNRESOLVED"
-        elif lookup_override == "NOT_APPLICABLE":
-            primary_lookup_status = "NOT_APPLICABLE"
-
-        # A model's explicit missing result is actionable only when it cites no fabricated source
-        # and the rule permits that fallback. Extraction gaps never trigger source substitution.
-        fallback_triggered = lookup_override == "CONFIRMED_ABSENT" or (primary_not_applicable and "primary_not_applicable" in rule_input["fallback_when"])
-        fallback_outcome = fallback_outcomes.get(item_id, {})
+        fallback_outcome = fallback_outcomes.get(item_id, {"status": "NOT_TRIGGERED", "reason": "规则声明的来源切换条件尚未满足。"})
+        fallback_lookup = fallback_outcome
+        fallback_triggered = fallback_outcome.get("status") != "NOT_TRIGGERED"
         fallback_selected = fallback_outcome.get("status") == "FOUND"
+        applicability_status = (fallback_outcome.get("applicability_status")
+                                if fallback_selected else ref.get("applicability_status", "UNRESOLVED"))
         if fallback_outcome.get("status") == "FOUND":
             selected_role = fallback_role
             ref_status = fallback_outcome.get("comparison_status") if fallback_outcome.get("comparison_status") in {"MATCH", "MISMATCH", "UNRESOLVED"} else "UNRESOLVED"
-            if fallback_outcome.get("date_status") != "ELIGIBLE":
+            allowed_applicability = ({"CONFIRMED"} if fallback_outcome.get("fallback_mode") == "candidate_review"
+                                     else {"CONFIRMED", "NOT_REQUIRED"})
+            if fallback_outcome.get("applicability_status") not in allowed_applicability:
                 ref_status = "UNRESOLVED"
             reference_evidence, reference_value = fallback_outcome["evidence"], fallback_outcome["value"]
             summary_evidence, summary_value = fallback_outcome["summary_evidence"], fallback_outcome["summary_value"]
-        elif fallback_triggered and fallback_outcome.get("status") in {"UNRESOLVED", "EXTRACTION_FAILED"}:
+        elif fallback_triggered:
             ref_status = "UNRESOLVED"
-
-        comparison_basis = (fallback_outcome if fallback_selected else ref).get("comparison_basis")
-        basis_unconfirmed = (rule.get("value_type") == "amount" and rule.get("period_policy") == "same_period"
-                             and (not isinstance(comparison_basis, dict) or not all(
-                                 comparison_basis.get(key) is True for key in ("same_period", "same_nature", "same_unit"))))
-        if basis_unconfirmed and ref_status in {"MATCH", "MISMATCH"}:
-            ref_status = "UNRESOLVED"
-        if _can_compare_numeric_deterministically(rule, ref_status) and summary_evidence and reference_evidence:
-            percent = True
-            summary_number = _normalized_numeric_value(summary_value, percent=percent)
-            reference_number = _normalized_numeric_value(reference_value, percent=percent)
-            if summary_number is None or reference_number is None:
+        if summary_evidence and reference_evidence:
+            selected_document = documents.get(selected_role, {})
+            context_ok, context_assessments = evaluate_declared_context(
+                rule_input["execution_plan"], target_document, selected_document,
+                reference_role=selected_role,
+            )
+            if not context_ok:
                 ref_status = "UNRESOLVED"
-            else:
-                ref_status = "MATCH" if summary_number == reference_number else "MISMATCH"
-        if (rule.get("comparison_policy") in {"role_aware_identifier", "code_set_intersection"}
-                and ref_status in {"MATCH", "MISMATCH"} and summary_evidence and reference_evidence):
-            code_status = _compare_code_sets(summary_value, reference_value)
-            ref_status = code_status or "UNRESOLVED"
-        if selected_role == fallback_role and reference_evidence and not _can_compare_numeric_deterministically(rule, ref_status):
-            # The fallback lookup response includes a separate semantic comparison decision.
-            ref_status = ref_status if ref_status in {"MATCH", "MISMATCH", "UNRESOLVED"} else "UNRESOLVED"
-        if rule_input["primary_source_eligibility"] != "ELIGIBLE":
-            status, reason_code = "NOT_CHECKED", "PRIMARY_SOURCE_DATE_UNCONFIRMED" if rule_input["primary_source_eligibility"] == "DATE_UNCONFIRMED" else "PRIMARY_SOURCE_AFTER_TARGET_DATE"
-        elif fallback_selected and fallback_outcome.get("date_status") != "ELIGIBLE":
-            status, reason_code = "UNRESOLVED", "FALLBACK_SOURCE_DATE_UNCONFIRMED"
-        elif not rule_input["summary_candidates"]:
+        else:
+            context_ok = primary_context_ok
+            context_assessments = primary_context_assessments
+        condition_assessment = fallback_outcome if fallback_selected else ref
+        assessment_roles = {
+            rule_input["execution_plan"].get("target_role"),
+            rule_input.get("primary_role", primary_role),
+        }
+        if fallback_selected and fallback_role:
+            assessment_roles.add(fallback_role)
+        assessment_roles.discard(None)
+        item_metadata_refs = _available_metadata_reference_ids(documents, assessment_roles)
+        condition_assessment = _filter_unavailable_metadata_refs(
+            condition_assessment, item_metadata_refs,
+        )
+        if summary_evidence and reference_evidence:
+            condition_source_ids = (
+                allowed_summary_ids[item_id] | allowed_primary_ids[item_id] | allowed_fallback_ids[item_id]
+                if fallback_selected else allowed_summary_ids[item_id] | allowed_primary_ids[item_id]
+            )
+            review_conditions_clear = _review_conditions_are_clear(
+                rule, condition_assessment, condition_source_ids, set(valid_sources),
+                available_metadata_refs=item_metadata_refs,
+            )
+            ref_status = _compare_by_execution_plan(
+                rule, summary_value, reference_value, ref_status, applicability_status,
+                review_conditions_clear, context_ok,
+            )
+        comparison_basis = None
+        if not rule_input["summary_candidates"]:
             status, reason_code = "NOT_CHECKED", "TARGET_FIELD_NOT_FOUND_IN_PRESET_SCOPE"
         elif not summary_evidence and primary_lookup_status in {"NO_CANDIDATES_UNCONFIRMED", "NOT_APPLICABLE"}:
             status, reason_code = "NOT_CHECKED", "FIELD_CANDIDATES_NOT_CONFIRMED"
@@ -1662,18 +1838,28 @@ async def compare_product_summary(
             status, reason_code = "NOT_CHECKED", "PRIMARY_LOOKUP_UNCONFIRMED"
         elif not fallback_selected and ref_status == "SOURCE_MISSING":
             status, reason_code = "NOT_CHECKED", "NO_VALID_REFERENCE"
-        elif basis_unconfirmed and summary_evidence and reference_evidence:
-            status, reason_code = "UNRESOLVED", "COMPARISON_BASIS_UNCONFIRMED"
         elif ref_status in {"MATCH", "MISMATCH"} and reference_evidence:
             status, reason_code = ref_status, None
         else:
             status, reason_code = "UNRESOLVED", "EVIDENCE_OR_COMPARISON_UNRESOLVED"
+        existing_reason = (
+            (fallback_outcome.get("comparison_reason") or "补充来源已按规则完成核对。")
+            if fallback_selected
+            else ref.get("reason") or value.get("reason") or "规则未能确认可比较的参考事实。"
+        )
+        final_reason = _reason_for_final_status(
+            status, existing_reason,
+            model_status=(fallback_outcome.get("comparison_status") if fallback_selected else ref.get("status")),
+            applicability_status=applicability_status,
+            review_conditions_clear=review_conditions_clear if summary_evidence and reference_evidence else False,
+            declared_context_clear=context_ok,
+        )
         primary_reference = {"role": primary_role, "status": "FOUND" if primary_lookup_status == "FOUND" else primary_lookup_status,
-                             "evidence": reference_evidence if selected_role == primary_role else [], "raw_text": reference_value if selected_role == primary_role else None}
+                             "evidence": primary_evidence, "raw_text": primary_reference_value,
+                             "coverage_status": primary_coverage_status,
+                             "uncovered_aspects": primary_uncovered_aspects}
         selected_reference = {"role": selected_role, "raw_text": reference_value if reference_evidence else None, "evidence": reference_evidence,
-                              "status": status, "reason": str(
-                                  (fallback_outcome.get("comparison_reason") or "根据补充招募说明书原文完成核对。")
-                                  if fallback_selected else ref.get("reason") or "根据选定来源完成核对。")}
+                              "status": status, "reason": final_reason}
         references_result = {primary_role: primary_reference}
         if fallback_role:
             references_result[fallback_role] = {"role": fallback_role, "status": "FOUND" if selected_role == fallback_role and reference_evidence else fallback_lookup["status"],
@@ -1684,11 +1870,6 @@ async def compare_product_summary(
             "primary_reference": primary_lookup_status,
             "selected_reference": "FOUND" if reference_evidence else "UNRESOLVED" if status == "UNRESOLVED" else "NOT_FOUND",
         }
-        applicability_status = (
-            rule_input["primary_source_eligibility"]
-            if rule_input["primary_source_eligibility"] != "ELIGIBLE"
-            else "NOT_APPLICABLE" if primary_not_applicable else "ELIGIBLE"
-        )
         evidence_status = (
             "VERIFIED" if summary_evidence and reference_evidence
             else "TARGET_ONLY" if summary_evidence
@@ -1723,7 +1904,7 @@ async def compare_product_summary(
                 for side in ("summary", "primary", "fallback")
             },
             "item_id": item_id, "module_id": rule["module_id"],
-            "excel_row": rule.get("excel_row"), "key": rule["key"], "label": rule["label"], "status": status,
+            "key": rule["key"], "label": rule["label"], "status": status,
             "extraction_status": extraction_status,
             "applicability_status": applicability_status,
             "comparison_status": status if status in {"MATCH", "MISMATCH", "UNRESOLVED"} else "NOT_CHECKED",
@@ -1739,24 +1920,16 @@ async def compare_product_summary(
             },
             "fallback_lookup": fallback_lookup,
             "selected_reference": {"role": selected_role, "evidence": reference_evidence},
-            "selected_source_date_status": fallback_outcome.get("date_status") if fallback_selected else "ELIGIBLE" if reference_evidence else None,
+            "selected_source_applicability": applicability_status,
+            "context_check_assessments": context_assessments,
+            "review_condition_assessments": condition_assessment.get("review_condition_assessments", []),
             "source_selection_reason": (
-                rule_input["primary_source_eligibility_reason"]
-                if rule_input["primary_source_eligibility"] != "ELIGIBLE"
-                else "主要定期报告有证据" if selected_role == primary_role and reference_evidence
-                else "主要报告返回了候选结论，但引用未通过原文校验" if primary_lookup_status == "FOUND"
-                else fallback_outcome.get("date_reason") or fallback_lookup["reason"]
+                "参考来源证据已核验" if selected_role == primary_role and reference_evidence
+                else "参考来源返回了候选结论，但引用未通过原文校验" if primary_lookup_status == "FOUND"
+                else fallback_lookup["reason"]
             ),
             "reason_code": reason_code,
-            "reason": str(
-                fallback_outcome.get("date_reason") if fallback_selected and fallback_outcome.get("date_status") != "ELIGIBLE"
-                else "概要指定章节未命中该指标，未执行比较。" if reason_code == "TARGET_FIELD_NOT_FOUND_IN_PRESET_SCOPE"
-                else "期间、费用性质或币种单位未确认一致，未作金额差异判断。" if reason_code == "COMPARISON_BASIS_UNCONFIRMED"
-                else (fallback_outcome.get("comparison_reason") or "已使用招募说明书原文完成本项核对。") if fallback_selected
-                else ref.get("reason") or value.get("reason") or rule_input["primary_source_eligibility_reason"]
-                or ("双方字段原文及引用已通过核验，核对一致。" if status == "MATCH" else None)
-                or ("主要来源尚不能确认是否披露。" if status == "NOT_CHECKED" else "未提供可验证的比较依据")
-            ),
+            "reason": final_reason,
         })
     if trace:
         trace({"kind": "artifact", "path": "comparison/facts/target_facts.json", "content": target_fact_records})

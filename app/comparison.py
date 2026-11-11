@@ -1,23 +1,14 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
-from app.domain import MODULE_RULES, normalize_identifier, normalize_stock_code, normalize_text
+from app.domain import normalize_identifier, normalize_text
+from app.rule_compiler import load_compiled_execution_plan
 
-
-MODULE_TITLES = {
-    "investment.asset_allocation": "报告期末基金资产组合情况",
-    "investment.industry_stock_portfolio": "报告期末按行业分类的股票投资组合",
-    "investment.stock_holdings": "期末按公允价值占基金资产净值比例排序的股票投资明细",
-}
-MODULE_FIELDS = {rule["rule_id"]: set(rule["fields"]) for rule in MODULE_RULES}
-FIELD_LABELS = {
-    "amount": "金额", "ratio_of_total_assets": "占基金总资产比例",
-    "fair_value": "公允价值", "ratio_of_net_assets": "占基金资产净值比例",
-    "quantity": "持有数量", "rank": "披露序号", "stock_name": "股票名称",
-    "row": "项目", "module": "模块", "row_identity": "行标识",
-}
 
 _UNIT_ALIASES = {
     "人民币元": "元",
@@ -33,28 +24,6 @@ _UNIT_ALIASES = {
 def _canonical_unit(unit: Any) -> str:
     value = normalize_text(str(unit or "")).lower()
     return _UNIT_ALIASES.get(value, value)
-
-def _row_has_only_empty_metrics(module_id: str, row: dict[str, Any]) -> bool:
-    fields = row.get("fields", {})
-    return all(
-        isinstance(fields.get(key), dict)
-        and fields[key].get("value_kind") in {"DASH", "EMPTY"}
-        and fields[key].get("evidence", {}).get("status") == "LOCATED"
-        for key in MODULE_FIELDS[module_id]
-    )
-
-
-def _investment_scope_key(value: Any) -> str:
-    investment = normalize_text(value or "unknown")
-    return {"指数投资": "index", "指数": "index", "index": "index",
-            "积极投资": "active", "积极": "active", "active": "active"}.get(investment, investment)
-
-
-def _industry_identity_scope(row: dict[str, Any]) -> str:
-    market = normalize_text(row.get("market_scope") or "unknown")
-    investment = _investment_scope_key(row.get("investment_scope"))
-    return f"{market}:{investment}"
-
 
 def _disclosure_key(disclosure: dict[str, Any]) -> tuple[str, str] | None:
     period = "".join(ch for ch in str(disclosure.get("period_end") or "") if ch.isdigit())
@@ -88,223 +57,111 @@ def _compare_empty_disclosures(
     return "UNRESOLVED_STRUCTURE"
 
 
-def _holdings_coverage(module: dict[str, Any]) -> tuple[str, int | None] | None:
-    scope = module.get("scope") or {}
-    if scope.get("disclosure_scope") == "all":
-        return "all", None
-    if scope.get("disclosure_scope") == "top_n":
-        try:
-            limit = int(scope.get("limit"))
-        except (TypeError, ValueError):
-            return None
-        if limit > 0:
-            return "top_n", limit
+def _no_data_conflicts_with_rows(
+    empty_module: dict[str, Any], empty_doc: dict[str, Any],
+    populated_module: dict[str, Any], populated_doc: dict[str, Any],
+    matching: dict[str, Any],
+) -> bool | None:
+    """Check whether a verified no-data statement contradicts rows in the same scope."""
+    claims = [claim for claim in empty_module.get("disclosures", [])
+              if claim.get("status") == "NO_DATA"]
+    if empty_module.get("status") != "EXTRACTED" or not claims:
+        return None
+    populated_period = str(populated_doc.get("document_info", {}).get("period_end") or "")
+    if not populated_period or not populated_module.get("rows"):
+        return None
+    scope_fields = matching.get("scope_fields", [])
+    for claim in claims:
+        claim_period = str(claim.get("period_end") or empty_doc.get("document_info", {}).get("period_end") or "")
+        if not claim_period or _generic_date(claim_period) != _generic_date(populated_period):
+            continue
+        claim_scope = claim.get("scope")
+        if not isinstance(claim_scope, dict) or not claim_scope:
+            continue
+        applicable_fields = [field for field in scope_fields if field in claim_scope]
+        if not applicable_fields:
+            continue
+        if all(
+            all(_generic_normalize_identity(row.get(field)) == _generic_normalize_identity(claim_scope[field])
+                for row in populated_module["rows"])
+            for field in applicable_fields
+        ):
+            return True
     return None
-
-
-def _reference_covers_target_coverage(
-    target: tuple[str, int | None] | None,
-    reference: tuple[str, int | None] | None,
-) -> bool:
-    """The periodic report may contain a superset of the prospectus target rows."""
-    if target is None or reference is None:
-        return False
-    target_kind, target_limit = target
-    reference_kind, reference_limit = reference
-    if target_kind == "all":
-        return reference_kind == "all"
-    if target_kind != "top_n" or target_limit is None:
-        return False
-    return reference_kind == "all" or (
-        reference_kind == "top_n" and reference_limit is not None and reference_limit >= target_limit
-    )
-
 
 
 def _numeric_equal(left: dict[str, Any], right: dict[str, Any]) -> bool | None:
     left_kind, right_kind = left.get("value_kind"), right.get("value_kind")
     if left_kind == "DASH" or right_kind == "DASH":
         return left_kind == right_kind
-    if left_kind != "NUMBER" or right_kind != "NUMBER":
+    left_value = left.get("normalized_value")
+    right_value = right.get("normalized_value")
+    left_unit = _canonical_unit(left.get("unit"))
+    right_unit = _canonical_unit(right.get("unit"))
+    if left_value is None:
+        left_value, inferred_unit = _decimal_value(left.get("raw_text"))
+        left_unit = left_unit or inferred_unit
+    if right_value is None:
+        right_value, inferred_unit = _decimal_value(right.get("raw_text"))
+        right_unit = right_unit or inferred_unit
+    if left_value == "DASH" or right_value == "DASH":
+        return left_value == right_value
+    if left_value is None or right_value is None:
         return None
-    left_unit, right_unit = _canonical_unit(left.get("unit")), _canonical_unit(right.get("unit"))
-    if left_unit and right_unit and left_unit != right_unit:
+    if bool(left_unit) != bool(right_unit) or (left_unit and right_unit and left_unit != right_unit):
         return None
     try:
-        return Decimal(str(left["normalized_value"])) == Decimal(str(right["normalized_value"]))
-    except (InvalidOperation, TypeError, KeyError):
+        return Decimal(str(left_value)) == Decimal(str(right_value))
+    except (InvalidOperation, TypeError):
         return None
 
 
-def _row_key(module_id: str, row: dict[str, Any], counts: dict[str, int]) -> tuple[str | None, bool]:
-    if module_id == "investment.asset_allocation":
-        key = str(row.get("row_key") or "").strip()
-        if key:
-            identity = f"{row.get('parent_key') or ''}/{key}"
-            return identity, counts.get(f"semantic:{identity}", 0) == 1
-        label = normalize_text(row.get("label"))
-        fallback = f"{row.get('parent_key') or ''}/{label}"
-        return (f"unmapped:{fallback}", counts.get(f"unmapped:{fallback}", 0) == 1) if label else (None, False)
-    if module_id == "investment.industry_stock_portfolio":
-        scope = _industry_identity_scope(row)
-        if scope.split(":", 1)[0] not in {"domestic", "hk_connect", "other"} or scope.endswith(":unknown"):
-            return None, False
-        name = normalize_text(row.get("industry_name") or row.get("label"))
-        if name == "合计":
-            return f"{scope}:total", True
-        code = normalize_identifier(row.get("industry_code"))
-        if code:
-            key = f"{scope}:code:{code}"
-            return key, counts.get(f"{scope}:{code}", 0) == 1
-        if name and counts.get(f"{scope}:{name}", 0) == 1:
-            return f"{scope}:name:{name}", False
-        return None, False
-    scope = f"{normalize_text(row.get('market_scope') or 'unknown')}:{_investment_scope_key(row.get('investment_scope'))}"
-    code = normalize_stock_code(row.get("stock_code"))
-    if not code or counts.get(f"{scope}:{code}", 0) > 1 or (scope.startswith("unknown:") and counts.get(f"all:{code}", 0) > 1):
-        return None, False
-    return f"{scope}:{code}", True
+def _decimal_value(raw: Any) -> tuple[str | None, str]:
+    """Parse one unambiguous numeric fact and its explicit unit generically."""
+    text = str(raw or "").strip()
+    if not text:
+        return None, ""
+    if text in {"-", "—", "–"}:
+        return "DASH", ""
+    import re
+    matches = re.findall(r"(?<![A-Za-z0-9_.])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?(?![A-Za-z0-9_.])", text)
+    if len(matches) != 1:
+        return None, ""
+    token = matches[0].replace(",", "")
+    if token.endswith("%"):
+        token = token[:-1]
+        inferred_unit = "%"
+    else:
+        unit_match = re.search(r"(?:人民币|港币|美元)?\s*(亿元|万元|元|股|份|人|天|年|月|日|倍)", text)
+        inferred_unit = _canonical_unit(unit_match.group(1)) if unit_match else ""
+    try:
+        return format(Decimal(token).normalize(), "f"), inferred_unit
+    except (InvalidOperation, ValueError):
+        return None, ""
 
 
-def _row_index(module_id: str, rows: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], set[str]]:
-    counts: dict[str, int] = {}
-    for row in rows:
-        if module_id == "investment.asset_allocation":
-            row_key = str(row.get("row_key") or "").strip()
-            if row_key:
-                identity = f"{row.get('parent_key') or ''}/{row_key}"
-                counts[f"semantic:{identity}"] = counts.get(f"semantic:{identity}", 0) + 1
-            label = normalize_text(row.get("label"))
-            if label:
-                identity = f"{row.get('parent_key') or ''}/{label}"
-                counts[f"unmapped:{identity}"] = counts.get(f"unmapped:{identity}", 0) + 1
-            continue
-        elif module_id == "investment.industry_stock_portfolio":
-            scope = _industry_identity_scope(row)
-            identity = normalize_identifier(row.get("industry_code")) or normalize_text(row.get("industry_name") or row.get("label"))
-        elif module_id == "investment.stock_holdings":
-            scope = f"{normalize_text(row.get('market_scope') or 'unknown')}:{_investment_scope_key(row.get('investment_scope'))}"
-            identity = normalize_stock_code(row.get("stock_code"))
-            if identity:
-                counts[f"all:{identity}"] = counts.get(f"all:{identity}", 0) + 1
-        else:
-            continue
-        if identity:
-            key = f"{scope}:{identity}"
-            counts[key] = counts.get(key, 0) + 1
-    result: dict[str, dict[str, Any]] = {}
-    unresolved: set[str] = set()
-    for index, row in enumerate(rows):
-        key, confident = _row_key(module_id, row, counts)
-        if not key or key in result or key in unresolved or not confident:
-            result.pop(key, None)
-            unresolved.add(key or f"unmapped:{index}")
-            continue
-        result[key] = row
-    return result, unresolved
+def _generic_date(value: Any) -> str:
+    import re
+    from datetime import date
+    text = str(value or "").strip()
+    match = re.search(r"(?<!\d)(\d{4})\s*(?:年|[-/.])\s*(\d{1,2})\s*(?:月|[-/.])\s*(\d{1,2})\s*日?(?!\d)", text)
+    if match:
+        try:
+            return date(int(match.group(1)), int(match.group(2)), int(match.group(3))).isoformat()
+        except ValueError:
+            pass
+    return normalize_text(text)
 
 
-def _align_asset_rows(left_rows: list[dict], right_rows: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Use unique source labels as a conservative fallback for model key drift."""
-    left, right = ([dict(row) for row in rows] for rows in (left_rows, right_rows))
-    sides = (left, right)
-    parent_maps = []
-    semantic_parent_keys = []
-    for rows in sides:
-        keyed: dict[str, list[dict]] = {}
-        labels: dict[str, list[dict]] = {}
-        for row in rows:
-            key = str(row.get("row_key") or "").strip()
-            label = normalize_text(row.get("label"))
-            if key:
-                keyed.setdefault(key, []).append(row)
-            if label:
-                labels.setdefault(label, []).append(row)
-        parent_maps.append((keyed, labels))
-        semantic_parent_keys.append(set(keyed))
-    shared_keys = semantic_parent_keys[0] & semantic_parent_keys[1]
-    shared_labels = set(parent_maps[0][1]) & set(parent_maps[1][1])
-    parent_tokens = []
-    for side_index, rows in enumerate(sides):
-        keyed, labels = parent_maps[side_index]
-        tokens = {}
-        for key, parents in keyed.items():
-            if len(parents) == 1:
-                label = normalize_text(parents[0].get("label"))
-                if key in shared_keys:
-                    tokens[key] = f"semantic:{key}"
-                elif label in shared_labels and len(parent_maps[1 - side_index][1].get(label, [])) == 1:
-                    tokens[key] = f"label:{label}"
-        parent_tokens.append(tokens)
-    for side_index, rows in enumerate(sides):
-        tokens = parent_tokens[side_index]
-        for row in rows:
-            parent_key = str(row.get("parent_key") or "").strip()
-            if parent_key in tokens:
-                row["parent_key"] = tokens[parent_key]
-
-    indexes = []
-    for rows in sides:
-        index: dict[tuple[str, str], list[dict]] = {}
-        for row in rows:
-            label = normalize_text(row.get("label"))
-            parent = str(row.get("parent_key") or "")
-            if label:
-                index.setdefault((parent, label), []).append(row)
-        indexes.append(index)
-    for identity in set(indexes[0]) & set(indexes[1]):
-        first, second = indexes[0][identity], indexes[1][identity]
-        if len(first) != 1 or len(second) != 1:
-            for row in (*first, *second):
-                row["schema_warnings"] = [*row.get("schema_warnings", []), "ambiguous_source_label"]
-            continue
-        row_a, row_b = first[0], second[0]
-        key_a = str(row_a.get("row_key") or "").strip()
-        key_b = str(row_b.get("row_key") or "").strip()
-        if key_a != key_b:
-            shared = f"source-label:{identity[0]}/{identity[1]}"
-            row_a["row_key"] = shared
-            row_b["row_key"] = shared
-    return left, right
-
-
-def _align_stock_markets(left_rows: list[dict], right_rows: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Use a unique security code when a market is absent, never across conflicting scopes."""
-    left = [dict(row) for row in left_rows]
-    right = [dict(row) for row in right_rows]
-    indexes = []
-    for rows in (left, right):
-        index: dict[str, list[dict]] = {}
-        for row in rows:
-            code = normalize_stock_code(row.get("stock_code"))
-            if code:
-                index.setdefault(code, []).append(row)
-        indexes.append(index)
-    for code in set(indexes[0]) & set(indexes[1]):
-        a, b = indexes[0][code], indexes[1][code]
-        if len(a) != 1 or len(b) != 1:
-            continue
-        first, second = a[0], b[0]
-        market_a, market_b = first.get("market_scope") or "unknown", second.get("market_scope") or "unknown"
-        scope_a = _investment_scope_key(first.get("investment_scope"))
-        scope_b = _investment_scope_key(second.get("investment_scope"))
-        if (market_a != "unknown" and market_b != "unknown" and market_a != market_b) or (
-            scope_a != "unknown" and scope_b != "unknown" and scope_a != scope_b
-        ):
-            first["schema_warnings"] = [*first.get("schema_warnings", []), "scope_conflict"]
-            second["schema_warnings"] = [*second.get("schema_warnings", []), "scope_conflict"]
-            continue
-        market = market_a if market_a != "unknown" else market_b
-        first["market_scope"] = second["market_scope"] = market
-    return left, right
-
-
-def _field_difference(row_id: str, row_label: str, key: str, left: dict[str, Any] | None, right: dict[str, Any] | None, status: str, message: str) -> dict[str, Any]:
+def _field_difference(
+    row_id: str, row_label: str, key: str, left: dict[str, Any] | None,
+    right: dict[str, Any] | None, status: str, message: str, field_label: str | None = None,
+) -> dict[str, Any]:
     return {
         "row_id": row_id,
         "row_label": row_label,
         "field_key": key,
-        "field_label": FIELD_LABELS.get(key, key),
+        "field_label": field_label or key,
         "status": status,
         "message": message,
         "prospectus": left,
@@ -312,236 +169,710 @@ def _field_difference(row_id: str, row_label: str, key: str, left: dict[str, Any
     }
 
 
-def _compare_module(module_id: str, left_doc: dict[str, Any], right_doc: dict[str, Any], blocked_status: str | None) -> dict[str, Any]:
+def _field_value(row: dict[str, Any], field: str) -> dict[str, Any] | None:
+    value = row.get("fields", {}).get(field)
+    if isinstance(value, dict):
+        return value
+    raw = row.get(field)
+    if raw is None:
+        return None
+    evidence = row.get(f"{field}_evidence") or row.get("row_evidence")
+    return {"raw_text": str(raw), "evidence": evidence if isinstance(evidence, dict) else {"status": "UNVERIFIED"}}
+
+
+def _generic_normalize_identity(value: Any, operation: str = "text") -> str:
+    if operation == "identifier":
+        return normalize_identifier(value)
+    return normalize_text(value)
+
+
+def _identity_equivalence_map(matching: dict[str, Any]) -> dict[str, str]:
+    """Build the rule-declared, normalized name equivalences for row identity."""
+    result: dict[str, str] = {}
+    for group in matching.get("identity_equivalence_groups", []):
+        canonical = _generic_normalize_identity(group.get("canonical_identity"))
+        if not canonical:
+            continue
+        for label in [group.get("canonical_identity"), *group.get("equivalent_labels", [])]:
+            normalized = _generic_normalize_identity(label)
+            if normalized:
+                result[normalized] = canonical
+    return result
+
+
+def _canonical_row_name(value: Any, matching: dict[str, Any]) -> str:
+    """Apply only rule-declared label aliases for identity matching."""
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    for prefix in sorted(matching.get("identity_prefixes_to_ignore", []), key=len, reverse=True):
+        marker = unicodedata.normalize("NFKC", str(prefix or "")).strip().rstrip(":：")
+        if marker:
+            text = re.sub(r"^\s*" + re.escape(marker) + r"\s*[:：]?\s*", "", text, count=1, flags=re.IGNORECASE)
+    normalized = _generic_normalize_identity(text)
+    return _identity_equivalence_map(matching).get(normalized, normalized)
+
+
+def _row_identity_value(row: dict[str, Any], field: str, matching: dict[str, Any]) -> str:
+    value = row.get(field)
+    if value is None:
+        value = (row.get("fields") or {}).get(field)
+    if isinstance(value, dict):
+        value = value.get("raw_text")
+    if field == "label":
+        return _canonical_row_name(value, matching)
+    operation = "identifier" if field.endswith(("_code", "_id")) else "text"
+    return _generic_normalize_identity(value, operation)
+
+
+def _generic_identifier_value(value: Any) -> str | None:
+    """Compare the identifier token in a cited value, not its varying label."""
+    text = unicodedata.normalize("NFKC", str(value or "")).upper()
+    cjk_positions = [index for index, character in enumerate(text)
+                     if "\u3400" <= character <= "\u9fff"]
+    if cjk_positions:
+        text = text[cjk_positions[-1] + 1:]
+    elif ":" in text or "：" in text:
+        text = re.split(r"[:：]", text)[-1]
+    tokens = re.findall(r"[A-Z0-9]+", text)
+    candidates = [token for token in tokens if any(character.isdigit() for character in token)]
+    distinct = set(candidates)
+    if len(distinct) == 1:
+        value_token = distinct.pop()
+        preceding = tokens[:tokens.index(value_token)]
+        if len(preceding) == 1 and preceding[0].isalpha():
+            return preceding[0] + value_token
+        if preceding and not cjk_positions:
+            return None
+        return value_token
+    if distinct:
+        return None
+    if cjk_positions:
+        # A compound Chinese description can contain several labeled IDs.
+        # If no unique identifier token remains after its label context, do
+        # not compare the whole prose string as though it were an ID.
+        return None
+    normalized = normalize_identifier(text)
+    return normalized or None
+
+
+def compare_declared_field(
+    field_spec: dict[str, Any], left: dict[str, Any] | None, right: dict[str, Any] | None,
+    *, semantic_status: str | None = None,
+) -> str:
+    """Apply one plan-declared comparison operation to two verified fact values.
+
+    Business meaning is carried by the plan. This helper only dispatches among
+    shared operations and returns a neutral comparison state.
+    """
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return "UNRESOLVED"
+    operation = field_spec.get("operation")
+    if operation == "decimal":
+        equal = _numeric_equal(left, right)
+    elif operation == "semantic":
+        if semantic_status in {"MATCH", "MISMATCH"}:
+            return semantic_status
+        equal = None
+    elif operation == "date":
+        left_date, right_date = _generic_date(left.get("raw_text")), _generic_date(right.get("raw_text"))
+        equal = left_date == right_date if left_date and right_date else None
+    elif operation == "identifier":
+        left_identifier = _generic_identifier_value(left.get("raw_text"))
+        right_identifier = _generic_identifier_value(right.get("raw_text"))
+        equal = (left_identifier == right_identifier
+                 if left_identifier is not None and right_identifier is not None else None)
+    else:
+        equal = _generic_normalize_identity(left.get("raw_text"), operation) == _generic_normalize_identity(
+            right.get("raw_text"), operation,
+        )
+    if equal is None:
+        return "UNRESOLVED"
+    return "MATCH" if equal else "MISMATCH"
+
+
+def _plan_row_candidates(
+    row: dict[str, Any], matching: dict[str, Any], parent_labels: dict[str, str] | None = None,
+) -> list[str]:
+    scopes = []
+    for field in matching.get("scope_fields", []):
+        value = row.get(field)
+        normalized = normalize_text(value)
+        if normalized and normalized not in {"unknown", "未知", "不确定"}:
+            scopes.append(f"{field}={normalized}")
+    hierarchy = []
+    for field in matching.get("hierarchy_fields", []):
+        value = row.get(field)
+        normalized = normalize_text(value)
+        # Parent keys are document-local pointers. Compare their resolved label,
+        # when available, so two documents can match the same hierarchy even
+        # when each extractor assigned a different internal row key.
+        if field == "parent_key" and normalized and parent_labels:
+            normalized = parent_labels.get(normalized, normalized)
+        if normalized and normalized not in {"unknown", "未知", "不确定"}:
+            hierarchy.append(f"{field}={normalized}")
+    prefix = "|".join((*scopes, *hierarchy))
+    candidates: list[str] = []
+    for kind, fields in (("primary", matching.get("identity_fields", [])),
+                         ("fallback", matching.get("fallback_identity_fields", []))):
+        for field in fields:
+            normalized = _row_identity_value(row, field, matching)
+            if normalized:
+                candidates.append(f"{prefix}|{kind}:{field}={normalized}")
+    label = row.get("label")
+    canonical_label = _canonical_row_name(label, matching)
+    if label and canonical_label and _generic_normalize_identity(label) in _identity_equivalence_map(matching):
+        candidates.append(f"{prefix}|declared_equivalence={canonical_label}")
+    return candidates
+
+
+def _plan_identity_candidates(row: dict[str, Any], matching: dict[str, Any]) -> set[str]:
+    fields = matching.get("identity_fields", [])
+    values = []
+    for field in fields:
+        normalized = _row_identity_value(row, field, matching)
+        if normalized:
+            values.append(f"{field}={normalized}")
+    # A stable key is preferred, but it is often document-local (or generated
+    # differently by two extractors). Keep declared fallback identities as
+    # additional constrained candidates so the caller can use them only when
+    # the primary identity does not line up and the row is unique.
+    for field in matching.get("fallback_identity_fields", []):
+        normalized = _row_identity_value(row, field, matching)
+        if normalized:
+            values.append(f"{field}={normalized}")
+    label = row.get("label")
+    canonical_label = _canonical_row_name(label, matching)
+    if label and canonical_label and _generic_normalize_identity(label) in _identity_equivalence_map(matching):
+        values.append(f"declared_equivalence={canonical_label}")
+    return set(values)
+
+
+def _row_dimension_values(
+    row: dict[str, Any], fields: list[str], parent_labels: dict[str, str] | None = None,
+    matching: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Return known declared dimensions; blank/unknown values are unspecified."""
+    unknown = {"unknown", "未知", "不确定", "未识别", "不详"}
+    result: dict[str, str] = {}
+    for field in fields:
+        value = row.get(field)
+        if value is None:
+            value = row.get("fields", {}).get(field)
+        if isinstance(value, dict):
+            value = value.get("raw_text")
+        normalized = normalize_text(value)
+        if not normalized or normalized in unknown:
+            continue
+        if field == "parent_key":
+            # A parent key is a document-local pointer, not a business label.
+            # Compare it only when it resolves to a row in this document; an
+            # unknown pointer is missing hierarchy evidence, not a conflict.
+            if not parent_labels or normalized not in parent_labels:
+                continue
+            normalized = parent_labels[normalized]
+            normalized = _canonical_row_name(normalized, matching or {})
+        result[field] = normalized
+    return result
+
+
+def _row_dimensions_compatible(
+    left: dict[str, Any], right: dict[str, Any], matching: dict[str, Any],
+    left_parent_labels: dict[str, str], right_parent_labels: dict[str, str],
+) -> bool:
+    """Allow an unspecified dimension to pair only under a shared row identity.
+
+    Known conflicting scope or hierarchy values remain distinct. The caller
+    requires a shared declared identity and a unique compatible candidate.
+    """
+    fields = list(dict.fromkeys([
+        *matching.get("scope_fields", []), *matching.get("hierarchy_fields", []),
+    ]))
+    left_values = _row_dimension_values(left, fields, left_parent_labels, matching)
+    right_values = _row_dimension_values(right, fields, right_parent_labels, matching)
+    return all(
+        left_values[field] == right_values[field]
+        for field in left_values.keys() & right_values.keys()
+    )
+
+
+def _required_scope_is_present(row: dict[str, Any], matching: dict[str, Any], parent_labels: dict[str, str]) -> bool:
+    required = matching.get("required_scope_fields", [])
+    if not required:
+        return True
+    values = _row_dimension_values(row, required, parent_labels, matching)
+    return all(field in values for field in required)
+
+
+def _generic_align_rows(
+    left_rows: list[dict[str, Any]], right_rows: list[dict[str, Any]], matching: dict[str, Any],
+    target_population: str,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], set[str]]:
+    def parent_labels(rows: list[dict[str, Any]]) -> dict[str, str]:
+        aliases: dict[str, str] = {}
+        identity_fields = [*matching.get("identity_fields", []), *matching.get("fallback_identity_fields", [])]
+        for row in rows:
+            label = normalize_text(row.get("label"))
+            if not label:
+                continue
+            canonical_label = _canonical_row_name(label, matching)
+            for field in identity_fields:
+                value = row.get(field)
+                if value is None:
+                    value = row.get("fields", {}).get(field)
+                if isinstance(value, dict):
+                    value = value.get("raw_text")
+                alias = _generic_normalize_identity(
+                    value, "identifier" if field.endswith(("_code", "_id")) else "text",
+                )
+                if alias:
+                    aliases[alias] = canonical_label
+        return aliases
+
+    left_parent_labels, right_parent_labels = parent_labels(left_rows), parent_labels(right_rows)
+    left_candidates = [_plan_row_candidates(row, matching, left_parent_labels) for row in left_rows]
+    right_candidates = [_plan_row_candidates(row, matching, right_parent_labels) for row in right_rows]
+    left_identity = [_plan_identity_candidates(row, matching) for row in left_rows]
+    right_identity = [_plan_identity_candidates(row, matching) for row in right_rows]
+    left_counts: dict[str, int] = {}
+    right_counts: dict[str, int] = {}
+    for candidate in (value for row in left_candidates for value in row):
+        left_counts[candidate] = left_counts.get(candidate, 0) + 1
+    for candidate in (value for row in right_candidates for value in row):
+        right_counts[candidate] = right_counts.get(candidate, 0) + 1
+
+    left_index: dict[str, dict[str, Any]] = {}
+    right_index: dict[str, dict[str, Any]] = {}
+    unresolved: set[str] = set()
+    claimed_right: set[int] = set()
+    matched_left: set[int] = set()
+    for left_idx, (row, candidates) in enumerate(zip(left_rows, left_candidates)):
+        if not _required_scope_is_present(row, matching, left_parent_labels):
+            unresolved.add(f"left:{left_idx}")
+            continue
+        shared = [candidate for candidate in candidates
+                  if left_counts.get(candidate) == 1 and right_counts.get(candidate) == 1]
+        right_matches = {
+            right_idx for right_idx, other_candidates in enumerate(right_candidates)
+            if any(candidate in other_candidates for candidate in shared)
+        }
+        # Structured extraction can leave a declared scope/hierarchy unknown
+        # on one side even when the row's strong identity is unique. Use the
+        # identity as a constrained fallback: a known conflict is never
+        # bridged, and ambiguity remains unresolved.
+        if not right_matches and left_identity[left_idx]:
+            possible = {
+                right_idx for right_idx, other_identity in enumerate(right_identity)
+                if left_identity[left_idx] & other_identity
+                and _row_dimensions_compatible(
+                    row, right_rows[right_idx], matching,
+                    left_parent_labels, right_parent_labels,
+                )
+            }
+            if len(possible) == 1:
+                right_matches = possible
+        if len(right_matches) == 0:
+            if left_identity[left_idx] and any(left_identity[left_idx] & identity for identity in right_identity):
+                unresolved.add(f"left:{left_idx}")
+                continue
+            unique_left_candidates = [candidate for candidate in candidates if left_counts.get(candidate) == 1]
+            collides_in_reference = any(right_counts.get(candidate, 0) > 1 for candidate in candidates)
+            if unique_left_candidates and not collides_in_reference:
+                left_index[unique_left_candidates[0]] = row
+            else:
+                unresolved.add(f"left:{left_idx}")
+            continue
+        if len(right_matches) > 1:
+            unresolved.add(f"left:{left_idx}")
+            continue
+        right_idx = next(iter(right_matches))
+        if not _required_scope_is_present(right_rows[right_idx], matching, right_parent_labels):
+            unresolved.add(f"left:{left_idx}")
+            continue
+        if right_idx in claimed_right:
+            unresolved.add(f"left:{left_idx}")
+            unresolved.add(f"right:{right_idx}")
+            continue
+        shared_exact = [candidate for candidate in candidates if candidate in right_candidates[right_idx]]
+        if shared_exact:
+            canonical = shared_exact[0]
+        else:
+            identity = sorted(left_identity[left_idx] & right_identity[right_idx])[0]
+            dimensions = _row_dimension_values(row, [
+                *matching.get("scope_fields", []), *matching.get("hierarchy_fields", []),
+            ], left_parent_labels, matching)
+            dimensions.update(_row_dimension_values(right_rows[right_idx], [
+                *matching.get("scope_fields", []), *matching.get("hierarchy_fields", []),
+            ], right_parent_labels, matching))
+            suffix = "|".join(f"{field}={dimensions[field]}" for field in sorted(dimensions))
+            canonical = f"{identity}|{suffix}" if suffix else identity
+        left_index[canonical] = row
+        right_index[canonical] = right_rows[right_idx]
+        matched_left.add(left_idx)
+        claimed_right.add(right_idx)
+
+    if target_population == "both_documents":
+        for left_idx, row in enumerate(left_rows):
+            if left_idx not in matched_left:
+                candidate = next(iter(left_candidates[left_idx]), f"unmapped:left:{left_idx}")
+                if candidate not in left_index:
+                    left_index[candidate] = row
+                else:
+                    unresolved.add(f"left:{left_idx}")
+        for right_idx, row in enumerate(right_rows):
+            if right_idx not in claimed_right:
+                candidate = next(iter(right_candidates[right_idx]), f"unmapped:right:{right_idx}")
+                if candidate not in right_index:
+                    right_index[candidate] = row
+                else:
+                    unresolved.add(f"right:{right_idx}")
+    return left_index, right_index, unresolved
+
+
+def _generic_coverage_complete(module: dict[str, Any]) -> bool:
+    if module.get("status") != "EXTRACTED" or module.get("completeness_warnings"):
+        return False
+    scope = module.get("scope") or {}
+    disclosure_scope = scope.get("disclosure_scope")
+    return disclosure_scope in {"all", "complete", "all_rows"} or module.get("coverage_complete") is True
+
+
+def _generic_path_value(doc: dict[str, Any], module: dict[str, Any], path: str) -> Any:
+    """Read a rule-declared data path without interpreting its business name."""
+    roots = {"document": doc, "module": module}
+    parts = path.split(".")
+    value: Any = roots.get(parts[0])
+    for part in parts[1:]:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    if isinstance(value, dict):
+        if "raw_text" in value:
+            return value.get("raw_text")
+        if "value" in value:
+            return value.get("value")
+    return value
+
+
+def _context_values_match(left_value: Any, right_value: Any, operation: str) -> bool | None:
+    if left_value in (None, "") or right_value in (None, ""):
+        return None
+    if operation in {"before_or_equal", "reference_before_or_equal"}:
+        left_date, right_date = _generic_date(left_value), _generic_date(right_value)
+        if not left_date or not right_date:
+            return None
+        if operation == "reference_before_or_equal":
+            return right_date <= left_date
+        return left_date <= right_date
+    if operation == "decimal":
+        return _numeric_equal({"raw_text": str(left_value)}, {"raw_text": str(right_value)})
+    return _generic_normalize_identity(left_value, operation) == _generic_normalize_identity(right_value, operation)
+
+
+def evaluate_declared_context(
+    plan: dict[str, Any], target_doc: dict[str, Any], reference_doc: dict[str, Any],
+    *, reference_role: str | None = None,
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Evaluate common and reference-role-specific context declared by a rule plan."""
+    comparison = plan.get("comparison", {})
+    assessments: list[dict[str, Any]] = []
+    unresolved = False
+
+    def assess(check: dict[str, Any], *, required: bool = True) -> bool | None:
+        left = _generic_path_value(target_doc, {}, check["target_path"])
+        right = _generic_path_value(reference_doc, {}, check["reference_path"])
+        matches = _context_values_match(left, right, check["operation"])
+        if matches is None and not required:
+            return None
+        assessments.append({"label": check["label"], "status": "MATCH" if matches else "UNRESOLVED"})
+        return matches
+
+    checks = [*comparison.get("context_checks", [])]
+    if reference_role:
+        checks.extend(comparison.get("context_checks_by_reference_role", {}).get(reference_role, []))
+    for check in checks:
+        matches = assess(check, required=check.get("required", True))
+        if matches is False or matches is None and check.get("required", True):
+            unresolved = True
+    for group in comparison.get("context_check_groups", []):
+        matched, conflict = 0, False
+        for check in group["checks"]:
+            result = assess(check, required=False)
+            if result is True:
+                matched += 1
+            elif result is False:
+                conflict = True
+        group_ok = not conflict and matched >= group["minimum_matches"]
+        assessments.append({"label": group["label"], "status": "MATCH" if group_ok else "UNRESOLVED"})
+        unresolved = unresolved or not group_ok
+    return not unresolved, assessments
+
+
+def _generic_compare_module(
+    plan: dict[str, Any], left_doc: dict[str, Any], right_doc: dict[str, Any], blocked_status: str | None,
+) -> dict[str, Any]:
+    rule_id = plan["rule_identity"]
+    title = plan["display_title"]
     left_modules = {module.get("rule_id"): module for module in left_doc.get("modules", [])}
     right_modules = {module.get("rule_id"): module for module in right_doc.get("modules", [])}
-    left_module, right_module = left_modules.get(module_id), right_modules.get(module_id)
-    title = MODULE_TITLES[module_id]
+    left_module, right_module = left_modules.get(rule_id), right_modules.get(rule_id)
+    base = {"rule_id": rule_id, "title": title,
+            "prospectus_rows": (left_module or {}).get("rows", []),
+            "periodic_rows": (right_module or {}).get("rows", [])}
     if blocked_status:
-        return {"rule_id": module_id, "title": title, "status": blocked_status, "differences": [],
-                "prospectus_rows": (left_module or {}).get("rows", []), "periodic_rows": (right_module or {}).get("rows", [])}
-    if not left_module or not right_module or left_module.get("status") == "MISSING_MODULE" or right_module.get("status") == "MISSING_MODULE":
-        difference = _field_difference(module_id, title, "module", None, None, "MISSING_MODULE", "一侧未识别到可核对的对应模块")
-        return {"rule_id": module_id, "title": title, "status": "MISSING_MODULE", "differences": [difference],
-                "prospectus_rows": (left_module or {}).get("rows", []), "periodic_rows": (right_module or {}).get("rows", [])}
+        return {**base, "status": blocked_status, "differences": []}
+    if not left_module or not right_module or any(
+        module.get("status") == "UNRESOLVED_STRUCTURE" for module in (left_module, right_module) if module
+    ):
+        return {
+            **base,
+            "status": "UNRESOLVED_STRUCTURE",
+            "differences": [],
+            "review_message": "至少一侧章节结构尚未确认，不能据此判断模块缺失。",
+        }
+    missing_sides = [module for module in (left_module, right_module)
+                     if module.get("status") == "MISSING_MODULE"]
+    if missing_sides and len(missing_sides) == 2:
+        return {
+            **base,
+            "status": "UNRESOLVED_STRUCTURE",
+            "differences": [],
+            "review_message": "两侧均未定位到该模块，尚不能确认其是否不适用。",
+        }
+    if missing_sides:
+        diff = _field_difference(rule_id, title, "module", None, None, "MISSING_MODULE", "一侧未识别到对应内容")
+        return {**base, "status": "MISSING_MODULE", "differences": [diff]}
+
+    scope_unresolved = False
+    for check in plan["comparison"].get("context_checks", []):
+        left_value = _generic_path_value(left_doc, left_module, check["target_path"])
+        right_value = _generic_path_value(right_doc, right_module, check["reference_path"])
+        equal = _context_values_match(left_value, right_value, check["operation"])
+        if equal is None:
+            scope_unresolved = scope_unresolved or check["required"]
+            continue
+        scope_unresolved = scope_unresolved or equal is not True
+    for group in plan["comparison"].get("context_check_groups", []):
+        matched = 0
+        conflict = False
+        for check in group["checks"]:
+            left_value = _generic_path_value(left_doc, left_module, check["target_path"])
+            right_value = _generic_path_value(right_doc, right_module, check["reference_path"])
+            equal = _context_values_match(left_value, right_value, check["operation"])
+            if equal is None:
+                continue
+            if equal:
+                matched += 1
+            else:
+                conflict = True
+        if conflict or matched < group["minimum_matches"]:
+            scope_unresolved = True
+    if scope_unresolved:
+        return {
+            **base,
+            "status": "UNRESOLVED_STRUCTURE",
+            "differences": [],
+            "review_message": "规则声明的基金身份、期间或适用范围未能确认一致，已停止逐行差异判定。",
+        }
+
     left_rows = left_module.get("rows", [])
     right_rows = right_module.get("rows", [])
-    if bool(left_rows) != bool(right_rows):
-        empty_module = right_module if left_rows else left_module
-        empty_claims = empty_module.get("disclosures") or []
-        if (empty_claims and all(item.get("status") == "NO_DATA" and _disclosure_key(item) is not None for item in empty_claims)
-                and all(module.get("status") == "EXTRACTED" for module in (left_module, right_module))):
+    matching = plan["row_matching"]
+    if not left_rows and right_rows:
+        conflict = _no_data_conflicts_with_rows(left_module, left_doc, right_module, right_doc, matching)
+        if conflict:
             difference = _field_difference(
-                module_id, title, "disclosure_status", None, None, "MISMATCH",
-                "一份文档明确披露无数据，另一份文档披露了数据行",
+                rule_id, title, "disclosure_status", None, None, "MISMATCH",
+                "同一报告期和适用范围内，一侧明确披露无数据，另一侧存在数据行。",
             )
-            return {
-                "rule_id": module_id, "title": title, "status": "MISMATCH",
-                "differences": [difference],
-                "review_message": "两份文档的披露状态不同。",
-                "prospectus_rows": left_rows, "periodic_rows": right_rows,
-            }
+            return {**base, "status": "MISMATCH", "differences": [difference],
+                    "review_message": "明确无数据披露与同范围数据行相互矛盾。",
+                    "prospectus_disclosures": left_module.get("disclosures", []),
+                    "periodic_disclosures": right_module.get("disclosures", [])}
+    elif left_rows and not right_rows:
+        conflict = _no_data_conflicts_with_rows(right_module, right_doc, left_module, left_doc, matching)
+        if conflict:
+            difference = _field_difference(
+                rule_id, title, "disclosure_status", None, None, "MISMATCH",
+                "同一报告期和适用范围内，一侧明确披露无数据，另一侧存在数据行。",
+            )
+            return {**base, "status": "MISMATCH", "differences": [difference],
+                    "review_message": "明确无数据披露与同范围数据行相互矛盾。",
+                    "prospectus_disclosures": left_module.get("disclosures", []),
+                    "periodic_disclosures": right_module.get("disclosures", [])}
     if not left_rows and not right_rows:
-        def with_document_period(module, doc):
+        def with_period(module: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
+            period = doc.get("document_info", {}).get("period_end")
             return {**module, "disclosures": [
-                {**claim, "period_end": claim.get("period_end") or doc.get("document_info", {}).get("period_end")}
+                {**claim, "period_end": claim.get("period_end") or period}
                 for claim in module.get("disclosures", [])
             ]}
         disclosure_status = _compare_empty_disclosures(
-            with_document_period(left_module, left_doc), with_document_period(right_module, right_doc),
+            with_period(left_module, left_doc), with_period(right_module, right_doc),
         )
         if disclosure_status:
-            return {
-                "rule_id": module_id,
-                "title": title,
-                "status": disclosure_status,
-                "differences": [] if disclosure_status == "MATCH" else [
-                    _field_difference(module_id, title, "disclosure_status", None, None,
-                                      "MISMATCH" if disclosure_status == "MISMATCH" else "UNRESOLVED",
-                                      "两份文档的披露状态或适用范围不同" if disclosure_status == "MISMATCH"
-                                      else "披露状态或适用范围证据不足，需复核")
-                ],
-                "review_message": "两侧原文均明确披露无数据，报告期及适用范围一致。" if disclosure_status == "MATCH" else "两份文档的披露原文、报告期或适用范围未能确认完整对应。" + " ".join(
-                    message for module in (left_module, right_module) for message in module.get("completeness_warnings", [])
-                ),
-                "prospectus_disclosures": left_module.get("disclosures", []),
-                "periodic_disclosures": right_module.get("disclosures", []),
-                "prospectus_rows": [],
-                "periodic_rows": [],
-            }
-    disclosure_ranges = None
-    stock_target_coverage_confirmed = True
-    if module_id == "investment.stock_holdings":
-        left_coverage, right_coverage = _holdings_coverage(left_module), _holdings_coverage(right_module)
-        stock_target_coverage_confirmed = _reference_covers_target_coverage(left_coverage, right_coverage)
-        disclosure_ranges = {"prospectus": left_coverage, "periodic_report": right_coverage}
-        left_rows, right_rows = _align_stock_markets(left_rows, right_rows)
-        # The prospectus defines the requested comparison set. Compare every
-        # target security that can be identified in the report, even when the
-        # chapter contains multiple sub-tables and its aggregate scope is unknown.
-        # Report-only securities are outside the requested comparison set.
-        target_codes = {
-            normalize_stock_code(row.get("stock_code"))
-            for row in left_rows
-            if normalize_stock_code(row.get("stock_code"))
-        }
-        if target_codes:
-            right_rows = [
-                row for row in right_rows
-                if normalize_stock_code(row.get("stock_code")) in target_codes
+            differences = [] if disclosure_status == "MATCH" else [
+                _field_difference(rule_id, title, "disclosure_status", None, None, "UNRESOLVED",
+                                  "披露状态、期间或范围证据不足")
             ]
-    if module_id == "investment.asset_allocation":
-        left_rows, right_rows = _align_asset_rows(left_rows, right_rows)
-    schema_issue = any(row.get("schema_warnings") for row in (*left_rows, *right_rows))
-    if schema_issue:
-        return {
-            "rule_id": module_id,
-            "title": title,
-            "status": "UNRESOLVED_STRUCTURE",
-            "differences": [],
-            "review_message": "部分行身份或引用无法确认，暂不将其列为指标差异。",
-            "prospectus_rows": left_rows,
-            "periodic_rows": right_rows,
-        }
-    left_index, left_unresolved = _row_index(module_id, left_rows)
-    right_index, right_unresolved = _row_index(module_id, right_rows)
-    unresolved_rows = left_unresolved | right_unresolved
-    differences: list[dict[str, Any]] = []
-    identity_unresolved = bool(unresolved_rows)
-    unresolved = (
-        left_module.get("status") != "EXTRACTED"
-        or right_module.get("status") != "EXTRACTED"
-        or identity_unresolved
-        or not left_rows or not right_rows
+            return {**base, "status": disclosure_status, "differences": differences,
+                    "review_message": None if disclosure_status == "MATCH" else "双方明确未持有披露的期间或适用范围证据不足。",
+                    "prospectus_disclosures": left_module.get("disclosures", []),
+                    "periodic_disclosures": right_module.get("disclosures", [])}
+
+    target_population = matching["target_population"]
+    target_only = target_population == "target_document" and matching["reference_superset_allowed"]
+    left_index, right_index, unresolved_rows = _generic_align_rows(
+        left_rows, right_rows, matching, "target_document" if target_only else "both_documents",
     )
-    all_keys = sorted(set(left_index) | set(right_index))
-    for row_key in all_keys:
-        left_row, right_row = left_index.get(row_key), right_index.get(row_key)
-        label = str((left_row or right_row or {}).get("label") or row_key)
+    unresolved = bool(unresolved_rows or scope_unresolved)
+    keys = set(left_index) | set(right_index)
+
+    differences: list[dict[str, Any]] = []
+    for key in sorted(keys):
+        left_row, right_row = left_index.get(key), right_index.get(key)
+        label = str((left_row or right_row or {}).get("label") or key)
         if left_row is None or right_row is None:
-            present_row = left_row or right_row
-            if _row_has_only_empty_metrics(module_id, present_row):
+            if target_only and left_row is None:
                 continue
-            if module_id == "investment.stock_holdings" and left_row is not None and not stock_target_coverage_confirmed:
+            if unresolved_rows:
+                # An unmatched row may be an identity/scope collision that the
+                # shared matcher could not disambiguate. Preserve it for review
+                # instead of turning a possible correspondence into a confirmed
+                # one-sided disclosure.
                 unresolved = True
                 continue
-            if unresolved:
+            missing_side_module = left_module if left_row is None else right_module
+            if (matching["require_complete_source_for_missing"]
+                    and not _generic_coverage_complete(missing_side_module)):
+                unresolved = True
                 continue
-            left_value = {"raw_text": left_row.get("label") or row_key, "evidence": left_row.get("row_evidence")} if left_row else None
-            right_value = {"raw_text": right_row.get("label") or row_key, "evidence": right_row.get("row_evidence")} if right_row else None
-            differences.append(_field_difference(row_key, label, "row", left_value, right_value, "MISSING_ROW", "仅在一份文档中出现"))
+            present = left_row or right_row or {}
+            diff = _field_difference(key, label, "row",
+                                     {"raw_text": present.get("label"), "evidence": present.get("row_evidence")} if left_row else None,
+                                     {"raw_text": present.get("label"), "evidence": present.get("row_evidence")} if right_row else None,
+                                     "MISSING_ROW", "仅在一侧文档中出现")
+            differences.append(diff)
             continue
-        field_keys = MODULE_FIELDS[module_id]
-        for field_key in sorted(field_keys):
-            left_field = left_row.get("fields", {}).get(field_key)
-            right_field = right_row.get("fields", {}).get(field_key)
-            if left_field is None and right_field is None:
-                unresolved = True
-                differences.append(_field_difference(row_key, label, field_key, None, None, "UNRESOLVED", "两份文档均未识别到该指标"))
+        for field_spec in plan["comparison"]["fields"]:
+            field = field_spec["field"]
+            left_value, right_value = _field_value(left_row, field), _field_value(right_row, field)
+            if left_value is None or right_value is None:
+                if field_spec["required"]:
+                    unresolved = True
+                    differences.append(_field_difference(key, label, field, left_value, right_value,
+                                                         "UNRESOLVED", "比较所需字段未能完整识别"))
                 continue
-            if left_field is None or right_field is None:
-                differences.append(_field_difference(row_key, label, field_key, left_field, right_field, "MISSING_FIELD", "一侧未识别到此字段"))
+            if any((value.get("evidence") or {}).get("status") != "LOCATED" for value in (left_value, right_value)):
+                unresolved = True
+                differences.append(_field_difference(key, label, field, left_value, right_value,
+                                                     "UNRESOLVED", "字段原文证据未能定位"))
                 continue
-            if any(item.get("evidence", {}).get("status") != "LOCATED" for item in (left_field, right_field)):
+            field_status = compare_declared_field(field_spec, left_value, right_value)
+            if field_status == "UNRESOLVED":
                 unresolved = True
-                differences.append(_field_difference(row_key, label, field_key, left_field, right_field, "UNRESOLVED", "原文证据未能唯一定位到 PDF 单元格"))
-                continue
-            equal = _numeric_equal(left_field, right_field)
-            if equal is None:
-                unresolved = True
-                differences.append(_field_difference(row_key, label, field_key, left_field, right_field, "UNRESOLVED", "数值或单位口径无法安全比较"))
-            elif not equal:
-                differences.append(_field_difference(row_key, label, field_key, left_field, right_field, "MISMATCH", "招募说明书与定期报告披露值不同"))
-        if module_id == "investment.industry_stock_portfolio" and left_row.get("industry_code") and right_row.get("industry_code"):
-            if normalize_text(left_row.get("industry_name")) != normalize_text(right_row.get("industry_name")):
-                unresolved = True
-                differences.append(_field_difference(
-                    row_key, label, "industry_name",
-                    {"raw_text": left_row.get("industry_name"), "evidence": left_row.get("row_evidence")},
-                    {"raw_text": right_row.get("industry_name"), "evidence": right_row.get("row_evidence")},
-                    "UNRESOLVED", "行业代码相同但行业名称冲突，需人工复核",
-                ))
-        if module_id == "investment.stock_holdings" and normalize_text(left_row.get("stock_name")) != normalize_text(right_row.get("stock_name")):
-            differences.append(_field_difference(
-                row_key, label, "stock_name",
-                {"raw_text": left_row.get("stock_name"), "evidence": left_row.get("row_evidence")},
-                {"raw_text": right_row.get("stock_name"), "evidence": right_row.get("row_evidence")},
-                "MISMATCH", "证券代码相同但股票名称披露不同",
-            ))
-        if module_id == "investment.stock_holdings" and left_row.get("rank") is not None and right_row.get("rank") is not None and str(left_row["rank"]) != str(right_row["rank"]):
-            differences.append(_field_difference(row_key, label, "rank", {"raw_text": str(left_row["rank"]), "evidence": left_row.get("rank_evidence")}, {"raw_text": str(right_row["rank"]), "evidence": right_row.get("rank_evidence")}, "RANK_ORDER_CHANGED", "持仓披露顺序变化；不作为证券身份或持仓数值错误"))
-    if any(item["status"] in {"MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE", "RANK_ORDER_CHANGED"} for item in differences):
+                differences.append(_field_difference(key, label, field, left_value, right_value,
+                                                     "UNRESOLVED", "字段值或比较口径无法确认"))
+            elif field_status == "MISMATCH":
+                differences.append(_field_difference(key, label, field, left_value, right_value,
+                                                     "MISMATCH", f"{field_spec['label']}披露不一致",
+                                                     field_label=field_spec["label"]))
+
+    if any(item["status"] in {"MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE"} for item in differences):
         status = "MISMATCH"
     elif unresolved or any(item["status"] == "UNRESOLVED" for item in differences):
         status = "UNRESOLVED_STRUCTURE"
     else:
         status = "MATCH"
-    review_message = None
-    completeness_messages = []
-    for document_label, module in (("招募说明书", left_module), ("定期报告", right_module)):
-        if not isinstance(module, dict):
-            continue
-        completeness_messages.extend(
-            f"{document_label}：{message}"
-            for message in module.get("completeness_warnings", [])
-        )
-    if identity_unresolved:
-        completeness_messages.append("部分行身份不足以唯一匹配，系统未将其判为单侧出现。")
-    if module_id == "investment.stock_holdings" and not stock_target_coverage_confirmed:
-        target_codes = {
-            normalize_stock_code(row.get("stock_code"))
-            for row in left_rows
-            if normalize_stock_code(row.get("stock_code"))
+    messages = []
+    if unresolved_rows:
+        messages.append("部分行身份或适用范围不能唯一匹配，已保留待复核状态。")
+    if scope_unresolved:
+        messages.append("基金身份、期间或规则声明的适用范围未能确认一致。")
+    if not _generic_coverage_complete(right_module) and matching["require_complete_source_for_missing"]:
+        messages.append("参考文档的披露范围或结构完整性尚未确认。")
+    disclosure_ranges = None
+    if any((module.get("scope") or {}).get("disclosure_scope") is not None
+           for module in (left_module, right_module)):
+        disclosure_ranges = {
+            role: ((module.get("scope") or {}).get("disclosure_scope"),
+                   (module.get("scope") or {}).get("limit"))
+            for role, module in (("prospectus", left_module), ("periodic_report", right_module))
         }
-        report_codes = {
-            normalize_stock_code(row.get("stock_code"))
-            for row in right_rows
-            if normalize_stock_code(row.get("stock_code"))
-        }
-        if target_codes - report_codes:
-            completeness_messages.append("定期报告披露范围或对应证券证据不足，无法确认招募说明书中未匹配证券是否确实缺失。")
-    if completeness_messages:
-        review_message = " ".join(completeness_messages)
+    display_right_rows = right_rows
+    if target_only:
+        selected_reference_ids = {id(row) for row in right_index.values()}
+        display_right_rows = [row for row in right_rows if id(row) in selected_reference_ids]
+    return {**base, "status": status, "differences": differences,
+            "periodic_rows": display_right_rows,
+            "review_message": " ".join(messages) or None,
+            **({"disclosure_ranges": disclosure_ranges} if disclosure_ranges is not None else {})}
+
+
+def _compare_module_without_plan(
+    module_id: str, left_doc: dict[str, Any], right_doc: dict[str, Any], blocked_status: str | None,
+) -> dict[str, Any]:
+    """Fail closed when no validated plan exists; never borrow chapter semantics."""
+    left_modules = {module.get("rule_id"): module for module in left_doc.get("modules", [])}
+    right_modules = {module.get("rule_id"): module for module in right_doc.get("modules", [])}
+    left_module, right_module = left_modules.get(module_id), right_modules.get(module_id)
+    title = (left_module or right_module or {}).get("title") or module_id
+    rows = {
+        "prospectus_rows": (left_module or {}).get("rows", []),
+        "periodic_rows": (right_module or {}).get("rows", []),
+    }
+    if blocked_status:
+        return {"rule_id": module_id, "title": title, "status": blocked_status, "differences": [], **rows}
     return {
         "rule_id": module_id,
         "title": title,
-        "status": status,
-        "differences": differences,
-        "review_message": review_message,
-        "prospectus_rows": left_rows,
-        "periodic_rows": right_rows,
-        **({"disclosure_ranges": disclosure_ranges} if disclosure_ranges is not None else {}),
+        "status": "UNRESOLVED_STRUCTURE",
+        "differences": [],
+        "review_message": "该规则没有可用的已验证执行计划，未套用其他规则的比较逻辑。",
+        **rows,
     }
 
 
-def compare_documents(prospectus: dict[str, Any], periodic_report: dict[str, Any]) -> dict[str, Any]:
+def _load_active_investment_plans() -> dict[str, dict[str, Any]]:
+    """Discover plans from the rule directory; rule identities select data, not algorithms."""
+    directory = Path(__file__).resolve().parents[1] / "rules" / "investment"
+    plans: dict[str, dict[str, Any]] = {}
+    for path in sorted(directory.glob("*.md")):
+        if path.name.startswith("common_"):
+            continue
+        plan = load_compiled_execution_plan(path)
+        if plan is not None:
+            plans[plan["rule_identity"]] = plan
+    return plans
+
+def compare_documents(
+    prospectus: dict[str, Any], periodic_report: dict[str, Any],
+    execution_plans: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     left_info = prospectus.get("document_info", {})
     right_info = periodic_report.get("document_info", {})
-    warnings: list[str] = []
-    left_code, right_code = str(left_info.get("fund_code") or "").strip(), str(right_info.get("fund_code") or "").strip()
-    fund_mismatch = bool(left_code and right_code and normalize_identifier(left_code) != normalize_identifier(right_code))
-    left_period, right_period = left_info.get("period_end"), right_info.get("period_end")
-    if left_period and right_period and str(left_period) != str(right_period):
-        warnings.append(f"报告期末不同（招募说明书：{left_period}；定期报告：{right_period}），仍按规则逐项比较字段，期间口径请人工确认。")
-    elif not left_period or not right_period:
-        warnings.append("至少一份文档的报告期末未能从原文证实；仍按规则比较已定位字段，期间信息需人工复核。")
-    left_disclosure, right_disclosure = left_info.get("disclosure_date"), right_info.get("disclosure_date")
-    report_after = bool(left_disclosure and right_disclosure and str(right_disclosure) > str(left_disclosure))
-    if report_after:
-        warnings.append("所选定期报告披露日期晚于招募说明书披露日期；不能作为该招书披露时点的校验报告。")
-    blocked_status = "FUND_MISMATCH" if fund_mismatch else "UNRESOLVED" if report_after else None
-    modules = [_compare_module(module_id, prospectus, periodic_report, blocked_status) for module_id in MODULE_TITLES]
+    # Identity, report period and applicable disclosure time are evaluated by
+    # each activated Markdown execution plan. The document-level comparator
+    # only aggregates those declarations; it must not impose a second policy.
+    blocked_status = None
+    if execution_plans is None:
+        execution_plans = _load_active_investment_plans()
+    discovered_ids = [
+        module.get("rule_id")
+        for document in (prospectus, periodic_report)
+        for module in document.get("modules", [])
+        if isinstance(module.get("rule_id"), str) and module.get("rule_id")
+    ]
+    module_ids = list(dict.fromkeys([*discovered_ids, *(execution_plans or {}).keys()]))
+    modules = []
+    for module_id in module_ids:
+        plan = execution_plans.get(module_id)
+        if plan is not None:
+            modules.append(_generic_compare_module(plan, prospectus, periodic_report, blocked_status))
+        else:
+            modules.append(_compare_module_without_plan(module_id, prospectus, periodic_report, blocked_status))
     differences = [item for module in modules for item in module["differences"]]
     real_differences = sum(item["status"] in {"MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE", "RANK_ORDER_CHANGED"} for item in differences)
-    if fund_mismatch:
-        status = "FUND_MISMATCH"
-        warnings.append(f"基金代码不一致（招募说明书：{left_code}；定期报告：{right_code}）。")
-    elif report_after:
-        status = "UNRESOLVED"
-    elif real_differences:
+    if real_differences:
         status = "MISMATCH"
-    elif not left_period or not right_period:
-        status = "UNRESOLVED"
     elif any(module["status"] != "MATCH" for module in modules):
         status = "UNRESOLVED"
     else:
@@ -553,6 +884,6 @@ def compare_documents(prospectus: dict[str, Any], periodic_report: dict[str, Any
             "periodic_report": {"filename": periodic_report.get("filename"), "page_count": periodic_report.get("page_count"), "page_dimensions": periodic_report.get("page_dimensions", []), "document_info": right_info, "metadata_evidence": periodic_report.get("metadata_evidence", {})},
         },
         "difference_count": real_differences,
-        "warnings": warnings,
+        "warnings": [],
         "modules": modules,
     }

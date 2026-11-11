@@ -5,13 +5,11 @@ import os
 import re
 import stat
 import tempfile
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.summary_rules import load_markdown_rules
-from app.rule_compiler import _is_plain_chinese_rule, load_compiled_rule
+from app.rule_compiler import _is_plain_chinese_rule, load_compiled_execution_plan
 
 
 RULE_ROOT = Path(__file__).resolve().parents[1] / "rules"
@@ -52,16 +50,6 @@ def _file_hash(content: str) -> str:
 
 
 def _title(scope: str, filename: str, content: str) -> str:
-    if scope == "product_summary":
-        lines = content.splitlines()
-        if lines and lines[0].strip() == "+++":
-            try:
-                end = next(i for i in range(1, len(lines)) if lines[i].strip() == "+++")
-                label = tomllib.loads("\n".join(lines[1:end])).get("label")
-                if isinstance(label, str) and label.strip():
-                    return label.strip()
-            except (StopIteration, tomllib.TOMLDecodeError):
-                pass
     heading = re.search(r"^#\s+(.+?)\s*#*\s*$", content, re.MULTILINE)
     if heading:
         return heading.group(1).strip()
@@ -103,37 +91,21 @@ def get_rule(scope: str, filename: str) -> dict[str, Any]:
 
 
 def _validate_summary_rules(scope: str, filename: str, content: str) -> None:
-    if scope != "product_summary":
-        return
-    if _is_plain_chinese_rule(content):
-        path = _rule_path(scope, filename)
-        compiled = load_compiled_rule(path, content)
-        if compiled is None:
-            raise ValueError("中文规则尚未生成可用的执行版本")
-        with tempfile.TemporaryDirectory(prefix="summary-rules-") as temp:
-            temp_dir = Path(temp)
-            for existing in _scope_dir(scope).glob("*.md"):
-                if existing.name == filename:
-                    (temp_dir / filename).write_text(compiled, encoding="utf-8")
-                    continue
-                current = existing.read_text(encoding="utf-8")
-                effective = load_compiled_rule(existing, current) if _is_plain_chinese_rule(current) else current
-                (temp_dir / existing.name).write_text(effective or current, encoding="utf-8")
-            try:
-                load_markdown_rules(temp_dir)
-            except (ValueError, OSError) as exc:
-                raise ValueError(f"生成的规则集无效：{exc}") from exc
-        return
-    with tempfile.TemporaryDirectory(prefix="summary-rules-") as temp:
-        temp_dir = Path(temp)
-        for path in _scope_dir(scope).glob("*.md"):
-            if path.name != filename:
-                (temp_dir / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-        (temp_dir / filename).write_text(content, encoding="utf-8")
-        try:
-            load_markdown_rules(temp_dir)
-        except (ValueError, OSError) as exc:
-            raise ValueError(f"规则格式无效：{exc}") from exc
+    del scope, filename
+    if not _is_plain_chinese_rule(content):
+        raise ValueError("规则须使用中文 Markdown 标题和正文，不接受参数文件或旧格式")
+    sections: dict[str, list[str]] = {}
+    active = None
+    for line in content.splitlines():
+        if line.startswith("## "):
+            active = line[3:].strip()
+            if not active or active in sections:
+                raise ValueError("规则分区标题不能为空或重复")
+            sections[active] = []
+        elif active:
+            sections[active].append(line)
+    if not sections or any(not "\n".join(lines).strip() for lines in sections.values()):
+        raise ValueError("每个规则分区都需要填写说明内容")
 
 
 def save_rule(scope: str, filename: str, content: str, expected_sha256: str) -> dict[str, Any]:
@@ -149,11 +121,9 @@ def save_rule(scope: str, filename: str, content: str, expected_sha256: str) -> 
     current_sha256 = _file_hash(current)
     if current_sha256 != expected_sha256:
         raise RuleConflictError("文件已被其他操作更新，请重新载入后再保存")
-    if _is_plain_chinese_rule(content):
-        compiled = load_compiled_rule(path, content)
-        if compiled is None:
-            raise ValueError("中文规则尚未生成可用的执行版本")
     _validate_summary_rules(scope, filename, content)
+    if not filename.startswith("common_") and load_compiled_execution_plan(path, content) is None:
+        raise ValueError("中文规则尚未生成当前版本的通用执行计划，修改尚未生效")
 
     original_mode = stat.S_IMODE(path.stat().st_mode)
     temp_name = None

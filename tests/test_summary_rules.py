@@ -2,48 +2,93 @@ from pathlib import Path
 
 import pytest
 
-from app.summary_rules import RuleLoadError, load_markdown_rules, module_groups
+import app.summary_rules as summary_rules
+from app.summary_rules import RuleLoadError, load_markdown_rules
 
 
-def _write_rule(path: Path, item_id: str, module_id: str = "profile", body: str = "核对业务含义。"):
-    path.write_text(
-        "+++\n"
-        f'item_id = "{item_id}"\n'
-        f'module_id = "{module_id}"\n'
-        'label = "基金简称"\n'
-        'value_type = "text"\n'
-        'excel_source_cell = "Sheet1!A2:B2"\n'
-        'primary_source = { role = "periodic_report", subtypes = ["quarterly"] }\n'
-        'period_policy = "current_identity"\n'
-        'unit_policy = "preserve_source_unit"\n'
-        'comparison_policy = "semantic_with_identity_and_scope"\n'
-        'search_terms = ["基金简称"]\n'
-        "+++\n\n"
-        f"{body}\n",
-        encoding="utf-8",
-    )
+RULE_BODY = """# 基金简称
+
+## 核对对象
+核对产品资料概要中的基金简称。
+
+## 查找内容
+在目标文件和参考文件的产品概况中查找。
+
+## 来源与适用范围
+以同一基金及适用份额为范围。
+
+## 比较方法
+比较双方披露的简称含义。
+
+## 特殊披露
+保留原文中的简称及适用对象。
+
+## 需要复核的情况
+身份或证据无法确认时待复核。
+"""
 
 
-def test_markdown_rules_load_stable_ids_and_group_by_module(tmp_path: Path):
-    _write_rule(tmp_path / "a.md", "fund_short_name", "identity")
-    _write_rule(tmp_path / "b.md", "manager", "people")
+def _write_rule(path: Path, body: str = RULE_BODY):
+    path.write_text(body, encoding="utf-8")
+
+
+def test_markdown_rules_load_without_technical_metadata(tmp_path: Path):
+    _write_rule(tmp_path / "fund_short_name.md")
+
     config, rules = load_markdown_rules(tmp_path)
 
-    assert config["version"] == "product-summary-md-v1"
-    assert {rule["item_id"] for rule in rules} == {"fund_short_name", "manager"}
-    assert set(module_groups(rules)) == {"identity", "people"}
-    assert rules[0]["meaning"] == "核对业务含义。"
-    assert rules[0]["excel_source_cell"] == "Sheet1!A2:B2"
+    assert config["version"].startswith("product-summary-prose-v2:")
+    assert rules[0]["item_id"] == "fund_short_name"
+    assert rules[0]["label"] == "基金简称"
+    assert rules[0]["sections"]["比较方法"] == "比较双方披露的简称含义。"
+    assert rules[0]["execution_plan"] is None
+    assert "excel_row" not in rules[0]
+    assert "comparison_policy" not in rules[0]
 
 
-def test_markdown_rule_loader_rejects_duplicate_ids(tmp_path: Path):
-    _write_rule(tmp_path / "a.md", "manager")
-    _write_rule(tmp_path / "b.md", "manager", "fees")
-    with pytest.raises(RuleLoadError, match="duplicate item_id"):
+def test_markdown_rule_loader_rejects_stable_identity_collisions(tmp_path: Path):
+    _write_rule(tmp_path / "fund_short_name.md")
+    _write_rule(tmp_path / "fund_short_name_基金简称.md")
+
+    with pytest.raises(RuleLoadError, match="重复的稳定身份"):
         load_markdown_rules(tmp_path)
 
 
-def test_markdown_rule_loader_requires_business_rule_body(tmp_path: Path):
-    _write_rule(tmp_path / "a.md", "manager", body=" ")
-    with pytest.raises(RuleLoadError, match="missing Markdown business rule body"):
+def test_markdown_rule_loader_requires_business_sections(tmp_path: Path):
+    _write_rule(tmp_path / "fund_short_name.md", "# 基金简称\n\n## 核对对象\n核对简称\n")
+
+    with pytest.raises(RuleLoadError, match="缺少业务说明分区"):
         load_markdown_rules(tmp_path)
+
+
+def test_summary_rule_can_declare_multiple_composite_text_facts(tmp_path: Path, monkeypatch):
+    _write_rule(tmp_path / "fund_short_name.md")
+    plan = {
+        "rule_identity": "fund_short_name",
+        "display_title": "简称组合",
+        "business_group": "产品概况",
+        "source_selection": {"primary_role": "periodic_report", "fallbacks": []},
+        "search_intent": {"preferred_sections": [], "preferred_sections_by_role": {}},
+        "comparison": {"fields": [
+            {"field": "exchange_name", "label": "场内简称", "operation": "text", "required": True},
+            {"field": "extended_name", "label": "扩位证券简称", "operation": "text", "required": True},
+        ]},
+    }
+    monkeypatch.setattr(summary_rules, "_read_plan", lambda path, source: plan)
+
+    _, rules = load_markdown_rules(tmp_path, require_execution_plans=True)
+
+    assert [field["label"] for field in rules[0]["comparison_fields"]] == ["场内简称", "扩位证券简称"]
+
+
+def test_multi_field_summary_comparison_uses_model_only_for_text_semantics():
+    from app.summary_check import _compare_by_execution_plan
+
+    rule = {"execution_plan": {"comparison": {"fields": [
+        {"field": "exchange_name", "operation": "text"},
+        {"field": "extended_name", "operation": "text"},
+    ]}}}
+    assert _compare_by_execution_plan(rule, "", "", "MATCH") == "MATCH"
+    assert _compare_by_execution_plan(rule, "", "", "UNRESOLVED") == "UNRESOLVED"
+    rule["execution_plan"]["comparison"]["fields"][0]["operation"] = "decimal"
+    assert _compare_by_execution_plan(rule, "", "", "MATCH") == "UNRESOLVED"

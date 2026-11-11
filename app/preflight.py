@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import calendar
-import os
 import re
 import unicodedata
 from datetime import date
-from difflib import SequenceMatcher
 from typing import Any
 
 import pymupdf as fitz
@@ -122,13 +120,6 @@ def _extract_fund_code(text: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _normalized_product_name(name: str) -> str:
-    """Compare the underlying fund name while ignoring a parenthesized share alias."""
-    compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", name))
-    compact = re.sub(r"[（(][^（）()]*[）)]", "", compact)
-    return compact.replace("基金基金", "基金")
-
-
 def _extract_fund_codes(text: str) -> list[str]:
     """Collect explicitly labelled master/share codes and front/back-end codes."""
     compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
@@ -143,7 +134,21 @@ def _extract_fund_codes(text: str) -> list[str]:
     return list(dict.fromkeys(codes))
 
 
+def _filename_date_candidate(filename: str) -> tuple[date, str] | None:
+    """Read only an explicit ISO date prefix; keep it separate from PDF dates."""
+    basename = filename.rsplit("/", 1)[-1]
+    match = re.match(r"^(20\d{2})[-_.](\d{1,2})[-_.](\d{1,2})(?=[_ .-]|$)", basename)
+    if not match:
+        return None
+    try:
+        parsed = date(*(int(part) for part in match.groups()))
+    except ValueError:
+        return None
+    return parsed, match.group(0)
+
+
 def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, Any]:
+    filename_date = _filename_date_candidate(filename)
     document = fitz.open(stream=content, filetype="pdf")
     try:
         first_pages = [document[index].get_text() for index in range(min(3, document.page_count))]
@@ -164,11 +169,14 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             else None
         )
         product_name = _extract_product_name(cover_text, role)
-        # Only document identity pages define the fund code. Later prospectus
-        # examples can contain labelled but unrelated ETF market codes (for
-        # example, a sample primary-market redemption list).
-        code = _extract_fund_code(first_text)
-        identity_codes = _extract_fund_codes(first_text)
+        # Periodic reports may place the labelled fund-identity table after
+        # cover, contents, and introductory pages. Search the complete report
+        # text for explicitly labelled identity codes; prospectuses and
+        # summaries keep the narrower opening context to avoid picking up
+        # unrelated codes from examples later in those documents.
+        identity_text = all_text if role == "periodic_report" else first_text
+        code = _extract_fund_code(identity_text)
+        identity_codes = _extract_fund_codes(identity_text)
         if code and code not in identity_codes:
             identity_codes.insert(0, code)
         if role == "prospectus":
@@ -209,8 +217,23 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             if not display_date_interval:
                 display_date_interval, display_date_quote = report_send_date_interval, report_send_date_quote
                 display_date_label = date_label
+        version_date_interval = None
+        version_date_quote = None
+        version_date_source = None
+        if role == "prospectus" and date_interval:
+            if date_interval[0] == date_interval[1]:
+                version_date_interval = date_interval
+                version_date_quote = date_quote
+                version_date_source = "pdf"
+            elif filename_date and date_interval[0] <= filename_date[0] <= date_interval[1]:
+                version_date_interval = (filename_date[0], filename_date[0])
+                version_date_quote = f"文件名日期前缀：{filename_date[1]}"
+                version_date_source = "filename"
         return {
             "filename": filename,
+            "filename_date_interval": _serialize_interval((filename_date[0], filename_date[0]) if filename_date else None),
+            "filename_date_quote": f"文件名日期前缀：{filename_date[1]}" if filename_date else None,
+            "filename_date_precision": "day" if filename_date else None,
             "page_count": document.page_count,
             "is_product_summary": is_product_summary,
             "is_prospectus": is_prospectus,
@@ -223,6 +246,10 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             "date_interval": _serialize_interval(date_interval),
             "date_quote": date_quote,
             "date_precision": "day" if date_interval and date_interval[0] == date_interval[1] else "month",
+            "version_date_interval": _serialize_interval(version_date_interval),
+            "version_date_quote": version_date_quote,
+            "version_date_source": version_date_source,
+            "version_date_precision": "day" if version_date_interval and version_date_interval[0] == version_date_interval[1] else None,
             "report_send_date_interval": _serialize_interval(report_send_date_interval),
             "report_send_date_quote": report_send_date_quote,
             "display_date_label": display_date_label,
@@ -257,7 +284,7 @@ def _read_interval(value: dict[str, str] | None) -> tuple[date, date] | None:
 
 
 def preflight_documents(payload: dict[str, Any]) -> dict[str, Any]:
-    """Use cover metadata to reject clearly incompatible document pairs before AI extraction."""
+    """Validate document roles and collect identity/date facts for rule execution."""
     prospectus = _document_metadata(
         str(payload["prospectus_filename"]), payload["prospectus_content"], "prospectus"
     )
@@ -269,40 +296,17 @@ def preflight_documents(payload: dict[str, Any]) -> dict[str, Any]:
     if periodic_report.get("is_product_summary"):
         status = "WRONG_DOCUMENT_TYPE"
         message = "右侧文件识别为产品资料概要，请切换到“产品资料概要核对”模式后重新提交。"
-    code_mismatch = bool(
-        prospectus.get("fund_code")
-        and periodic_report.get("fund_code")
-        and prospectus["fund_code"] != periodic_report["fund_code"]
-    )
-    names = (prospectus.get("fund_name"), periodic_report.get("fund_name"))
-    name_mismatch = bool(
-        not code_mismatch
-        and not (prospectus.get("fund_code") and periodic_report.get("fund_code"))
-        and names[0]
-        and names[1]
-        and SequenceMatcher(None, _normalized_product_name(names[0]), _normalized_product_name(names[1])).ratio() < 0.82
-    )
-    if status == "READY" and (code_mismatch or name_mismatch):
-        status = "FUND_MISMATCH"
-        left_identity = prospectus.get("fund_code") or prospectus.get("fund_name") or "未识别"
-        right_identity = periodic_report.get("fund_code") or periodic_report.get("fund_name") or "未识别"
-        message = f"产品不一致，无法比较。招募说明书识别为 {left_identity}，定期报告识别为 {right_identity}。"
-
-    max_gap_days = max(0, int(os.getenv("PROSPECTUS_MAX_DATE_GAP_DAYS", "183")))
     left_interval = _read_interval(prospectus.get("date_interval"))
     right_interval = _read_interval(periodic_report.get("date_interval"))
     date_gap_days = _days_between_intervals(left_interval, right_interval) if left_interval and right_interval else None
-    if status == "READY" and date_gap_days is not None and date_gap_days > max_gap_days:
-        status = "DATE_MISMATCH"
-        message = (
-            f"招募说明书与定期报告日期相差 {date_gap_days} 天，超过允许的 {max_gap_days} 天，无法比较。"
-        )
 
     return {
         "status": status,
         "blocked": status != "READY",
         "message": message,
-        "max_date_gap_days": max_gap_days,
+        # Diagnostic only: this compares a prospectus cover date with a
+        # report-period date, which are different business facts. The
+        # applicability decision belongs to the compiled Markdown rules.
         "date_gap_days": date_gap_days,
         "prospectus": prospectus,
         "periodic_report": periodic_report,
@@ -310,7 +314,7 @@ def preflight_documents(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def preflight_summary_documents(payload: dict[str, Any]) -> dict[str, Any]:
-    """Validate summary task roles, identities and publication timing."""
+    """Validate summary task roles and collect identity/date facts for rule execution."""
     documents = payload["documents"]
     summary = _document_metadata(documents["product_summary"]["filename"], documents["product_summary"]["content"], "product_summary")
     report = _document_metadata(documents["periodic_report"]["filename"], documents["periodic_report"]["content"], "periodic_report")
@@ -321,43 +325,17 @@ def preflight_summary_documents(payload: dict[str, Any]) -> dict[str, Any]:
         status, message = "WRONG_REFERENCE_TYPE", "主要依据文件识别为产品资料概要，应上传定期报告。"
     elif report.get("is_prospectus") or not report.get("is_periodic_report"):
         status, message = "WRONG_REFERENCE_TYPE", "主要依据文件未识别为定期报告，请检查上传文件。"
-    identities = [("产品资料概要", summary), ("定期报告", report)]
     if "prospectus" in documents:
         prospectus = _document_metadata(documents["prospectus"]["filename"], documents["prospectus"]["content"], "prospectus")
-        identities.append(("招募说明书", prospectus))
         if status == "READY" and not prospectus.get("is_prospectus"):
             status, message = "WRONG_SUPPLEMENT_TYPE", "补充依据文件未识别为招募说明书，请检查上传文件。"
     else:
         prospectus = None
-    baseline_name = summary.get("fund_name")
-    baseline_code = summary.get("fund_code")
-    baseline_codes = set(summary.get("fund_codes") or ([baseline_code] if baseline_code else []))
-    mismatch = None
-    for label, metadata in identities[1:]:
-        candidate_codes = set(metadata.get("fund_codes") or ([metadata.get("fund_code")] if metadata.get("fund_code") else []))
-        if baseline_codes and candidate_codes and baseline_codes.isdisjoint(candidate_codes):
-            mismatch = f"产品身份不一致：产品资料概要代码 {baseline_code}，{label}代码 {metadata['fund_code']}。"
-            break
-        if (not (baseline_codes and candidate_codes) and baseline_name and metadata.get("fund_name")
-                and SequenceMatcher(None, _normalized_product_name(baseline_name), _normalized_product_name(metadata["fund_name"])).ratio() < 0.82):
-            mismatch = f"产品身份不一致：产品资料概要与{label}的基金名称不匹配。"
-            break
-    if status == "READY" and mismatch:
-        status, message = "FUND_MISMATCH", mismatch
-    if status == "READY" and not all(metadata.get("fund_code") or metadata.get("fund_name") for _, metadata in identities):
-        status, message = "IDENTITY_UNCONFIRMED", "至少一份文件的基金身份未能确认，结果需人工复核。"
-    summary_date = _read_interval(summary.get("date_interval"))
-    report_send_date = _read_interval(report.get("report_send_date_interval"))
-    future_report = bool(summary_date and report_send_date and report_send_date[0] > summary_date[1])
-    if status == "READY" and future_report:
-        status, message = "REFERENCE_NOT_AVAILABLE_AT_CUTOFF", "定期报告送出日晚于概要编制日，不作为该时点的有效依据。"
     return {
         "status": status,
-        "blocked": status not in {"READY", "IDENTITY_UNCONFIRMED"},
+        "blocked": status != "READY",
         "message": message,
         "product_summary": summary,
         "periodic_report": report,
         "prospectus": prospectus,
-        "identity_unconfirmed": status == "IDENTITY_UNCONFIRMED",
-        "report_not_available_at_compilation": future_report,
     }

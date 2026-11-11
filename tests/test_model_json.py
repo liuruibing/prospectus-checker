@@ -19,3 +19,14 @@ def test_complete_items_survive_extra_closing_brace():
 def test_broken_value_is_not_invented():
     with pytest.raises(ValueError):
         read_model_json('{"items":[{"value":"未完成')
+
+
+def test_complete_root_object_survives_only_surplus_closing_braces():
+    data, recovered = read_model_json('{"execution_plan":{"fields":[]}}}}')
+    assert recovered
+    assert data == {"execution_plan": {"fields": []}}
+
+
+def test_second_json_object_is_not_silently_ignored():
+    with pytest.raises(ValueError):
+        read_model_json('{"execution_plan":{}} {"other":true}')

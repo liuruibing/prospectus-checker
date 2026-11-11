@@ -388,9 +388,9 @@
       "target_value": "0.15%/年",
       "reference_value": "0.15%/年",
       "expected_value": "0.15%/年",
-      "status": "EXPECTED_UNCONFIRMED",
-      "expected_comparison_status": "UNRESOLVED",
-      "period_applicability": "same_contract_annual_rate_at_2025-11-24",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "annual_rate_confirmed_current_at_summary_compilation",
       "primary_evidence": {
         "role": "primary_reference",
         "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
@@ -411,12 +411,19 @@
         {
           "role": "fallback_reference",
           "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
-          "pdf_page": 75,
+          "pdf_page": 107,
           "quote": "本基金的管理费按前一日基金资产净值的0.15%年费率计提。",
+          "kind": "SUPPLEMENT"
+        },
+        {
+          "role": "fallback_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+          "pdf_page": 132,
+          "quote": "华泰柏瑞沪深300交易型开放式指数证券投资基金调低管理费率和托管费率并修改基金合同和托管协议的公告，披露日期：2024-11-20。",
           "kind": "SUPPLEMENT"
         }
       ],
-      "reason": "费率文本与概要一致，但招募说明书和概要编制日同为2025-11-24，缺少日内时间或此前生效版本证据，不能确认费率在编制时点已适用。",
+      "reason": "招募说明书第107页列示当前管理费/托管费年费率；第132页公告目录显示该基金已于2024-11-20调低相应费率，早于概要编制日2025-11-24，时间适用关系有原文支持，双方费率一致。",
       "expected_selected_reference_role": "prospectus"
     },
     {
@@ -426,9 +433,9 @@
       "target_value": "0.05%/年",
       "reference_value": "0.05%/年",
       "expected_value": "0.05%/年",
-      "status": "EXPECTED_UNCONFIRMED",
-      "expected_comparison_status": "UNRESOLVED",
-      "period_applicability": "same_contract_annual_rate_at_2025-11-24",
+      "status": "CONFIRMED",
+      "expected_comparison_status": "MATCH",
+      "period_applicability": "annual_rate_confirmed_current_at_summary_compilation",
       "primary_evidence": {
         "role": "primary_reference",
         "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-10-28_2025年第3季度报告.pdf",
@@ -449,12 +456,19 @@
         {
           "role": "fallback_reference",
           "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
-          "pdf_page": 75,
+          "pdf_page": 107,
           "quote": "本基金的托管费按前一日基金资产净值的0.05%的年费率计提。",
+          "kind": "SUPPLEMENT"
+        },
+        {
+          "role": "fallback_reference",
+          "path": "assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-11-24_招募说明书更新_2025年第3号.pdf",
+          "pdf_page": 132,
+          "quote": "华泰柏瑞沪深300交易型开放式指数证券投资基金调低管理费率和托管费率并修改基金合同和托管协议的公告，披露日期：2024-11-20。",
           "kind": "SUPPLEMENT"
         }
       ],
-      "reason": "费率文本与概要一致，但招募说明书和概要编制日同为2025-11-24，缺少日内时间或此前生效版本证据，不能确认费率在编制时点已适用。",
+      "reason": "招募说明书第107页列示当前管理费/托管费年费率；第132页公告目录显示该基金已于2024-11-20调低相应费率，早于概要编制日2025-11-24，时间适用关系有原文支持，双方费率一致。",
       "expected_selected_reference_role": "prospectus"
     },
     {

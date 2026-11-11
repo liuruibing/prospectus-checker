@@ -15,11 +15,11 @@ from typing import Any, Callable
 
 import pymupdf as fitz
 
-from app.domain import COMMON_RULE_FILE, MODULE_RULES, normalize_numeric, title_aliases
+from app.domain import COMMON_RULE_FILE, normalize_numeric
 from app.chapter_sources import ChapterCache, _centers_map_uniquely, _header_centers, bind_sources, column_unit, markdown_rows, merge_source_batch_modules, render_catalogue, resolve_data_columns, source_catalogue, source_catalogue_batches, source_gaps
 from app.pdf_worker import run_pdf
 from app.pdf_document import page_tables, require_ready, verified_conversion
-from app.rule_compiler import capture_rule_set, effective_rule_text
+from app.rule_compiler import capture_rule_set, load_investment_rule_definitions, _stable_rule_identity
 from app.headings import parse_heading
 
 MAX_PDF_PAGES = int(os.getenv("PROSPECTUS_MAX_PAGES", "240"))
@@ -28,11 +28,6 @@ SOURCE_BATCH_CHARS = int(os.getenv("PROSPECTUS_SOURCE_BATCH_CHARS", "24000"))
 SECTION_SCORE_LOOKAHEAD = 35
 SECTION_PARENT_SCORE_TOLERANCE = 5
 CONTENTS_LINE_PENALTY = 100
-MODEL_IDENTITY_FIELDS = (
-    "row_key", "row_id", "row_label", "parent_key", "industry_code",
-    "industry_name", "stock_code", "stock_name", "rank", "market_scope",
-    "investment_scope",
-)
 
 
 def _trace_event(
@@ -91,7 +86,7 @@ def _alias_spans(line: str, aliases: list[str]) -> list[tuple[int, int]]:
                    for alias in aliases if len(alias)>=10]
         # Accept small insertions while retaining every character of the
         # configured title. Similarity alone could confuse stocks with bonds.
-        compatible = any(match.ratio()>=.9 and all(tag in {'equal','insert'}
+        compatible = any(match.ratio()>=.75 and all(tag in {'equal','insert'}
                          for tag,*_ in match.get_opcodes()) for match in matches)
         start = compact_line.find(title)
         if start>=0 and compatible:
@@ -105,36 +100,196 @@ def _alias_spans(line: str, aliases: list[str]) -> list[tuple[int, int]]:
     return merged
 
 
+def _heading_alias_spans(lines: list[str], index: int, aliases: list[str]) -> list[tuple[int, int]]:
+    """Match a heading, never a body sentence that merely mentions a section alias."""
+    parsed = parse_heading(lines[index])
+    info = _heading_info(lines, index)
+    if info:
+        title = info[2].strip()
+    elif parsed:
+        title = parsed.title.strip()
+    else:
+        # Unnumbered, unmarked titles are accepted only when the entire line
+        # is the configured title. A phrase embedded in prose must not start
+        # a section and absorb the rest of the document.
+        line_title = lines[index].strip().strip(" ：:。；;、")
+        if any(_normal(line_title) == _normal(alias.strip().strip(" ：:。；;、"))
+               for alias in aliases if alias.strip()):
+            return [(0, len(lines[index]))]
+        return []
+
+    spans = _alias_spans(title, aliases)
+    if spans:
+        return [(0, len(lines[index]))]
+
+    compact_title, _ = _compact_with_offsets(title)
+    # A heading may omit a harmless leading qualifier that the rule uses,
+    # such as "报告期末". Allow a near-complete title contained in the rule
+    # wording, but only on a structural heading and only when most of the
+    # configured wording is present.
+    for alias in aliases:
+        compact_alias, _ = _compact_with_offsets(alias)
+        if (len(compact_title) >= 10 and compact_title in compact_alias
+                and len(compact_title) / max(len(compact_alias), 1) >= 0.75):
+            return [(0, len(lines[index]))]
+
+    for next_index in range(index + 1, min(len(lines), index + 8)):
+        value = lines[next_index].strip()
+        if not value or value.startswith("<!--"):
+            continue
+        if value.startswith(("#", "<", "![")) or "|" in value or len(value) > 140:
+            break
+        if value.endswith(("。", "；", ";")):
+            break
+        title += value
+        compact_title, _ = _compact_with_offsets(title)
+        matches = [SequenceMatcher(None, _compact_with_offsets(alias)[0], compact_title, autojunk=False)
+                   for alias in aliases if len(alias) >= 10]
+        if any(match.ratio() >= .75 and all(tag in {"equal", "insert"}
+                                            for tag, *_ in match.get_opcodes())
+               for match in matches):
+            return [(0, len(lines[index]))]
+    return []
+
+
+def _heading_alias_specificity(lines: list[str], index: int, aliases: list[str]) -> int:
+    """Measure how much configured section wording is evidenced by a heading."""
+    if not _heading_alias_spans(lines, index, aliases):
+        return 0
+    info = _heading_info(lines, index)
+    title = info[2] if info else (parse_heading(lines[index]).title if parse_heading(lines[index]) else lines[index])
+    compact_title, _ = _compact_with_offsets(title)
+    return max(
+        (min(len(compact_title), len(_compact_with_offsets(alias)[0]))
+         for alias in aliases if _heading_alias_spans(lines, index, [alias])),
+        default=0,
+    )
+
+
 def _heading_depth(text: str) -> int | None:
     heading = parse_heading(text)
     return heading.depth if heading else None
 
 
-def _anydoc_sections(markdown: str, rule_texts: dict[str, str]) -> dict[str, str]:
+def _next_heading_text(lines: list[str], index: int) -> tuple[int, str] | None:
+    """Read a heading whose number and title were split into separate PDF blocks."""
+    for next_index in range(index + 1, min(len(lines), index + 8)):
+        value = lines[next_index].strip()
+        if not value or value.startswith("<!--") or value.startswith("!["):
+            continue
+        if value.startswith("<") or "|" in value or len(value) > 140:
+            return None
+        if value.endswith(("。", "；", ";")):
+            return None
+        return next_index, value
+    return None
+
+
+def _heading_info(lines: list[str], index: int) -> tuple[str, int, str] | None:
+    """Return (number, depth, title), including AnyDoc's detached numeric headings."""
+    value = lines[index].strip()
+    parsed = parse_heading(value)
+    if parsed:
+        return parsed.number, parsed.depth, parsed.title
+
+    # AnyDoc can emit a PDF heading's number and title as two independent text
+    # blocks, with source-page comments between them. Treat that pair as one
+    # structural heading so section aggregation stops at the next peer.
+    if re.fullmatch(r"\d{1,3}[、.]?", value):
+        following = _next_heading_text(lines, index)
+        if following:
+            title = following[1]
+            return re.sub(r"[、.]$", "", value), 1, title
+
+    # When the alias match starts on the title block, recover its detached
+    # number from the preceding block for hierarchy and boundary decisions.
+    for previous_index in range(index - 1, max(-1, index - 8), -1):
+        previous = lines[previous_index].strip()
+        if not previous or previous.startswith("<!--") or previous.startswith("!["):
+            continue
+        if re.fullmatch(r"\d{1,3}[、.]?", previous):
+            return re.sub(r"[、.]$", "", previous), 1, value
+        break
+    return None
+
+
+def _heading_depth_at(lines: list[str], index: int) -> int | None:
+    info = _heading_info(lines, index)
+    return info[1] if info else None
+
+
+def _rule_search_aliases(rule_text: str, execution_plan: dict[str, Any] | None = None) -> list[str]:
+    """Use the compiled rule's semantic chapter hints, not chapter-ID code branches."""
+    if isinstance(execution_plan, dict):
+        search = execution_plan.get("search_intent", {})
+        candidates = [execution_plan.get("display_title"), search.get("target_description"),
+                      *(search.get("preferred_sections", []) if isinstance(search, dict) else [])]
+        return list(dict.fromkeys(
+            value.strip() for value in candidates
+            if isinstance(value, str) and value.strip()
+        ))
+    return []
+
+
+def _rule_definitions(execution_plans: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Build the active rule set from Markdown files and their validated plans."""
+    if execution_plans is None:
+        _, _, definitions = load_investment_rule_definitions()
+        return definitions
+    result = []
+    directory = Path(__file__).resolve().parents[1] / "rules" / "investment"
+    paths = {
+        _stable_rule_identity("investment", path.name): path
+        for path in directory.glob("*.md") if not path.name.startswith("common_")
+    }
+    for rule_id, plan in execution_plans.items():
+        path = paths.get(rule_id)
+        if path is None:
+            raise ValueError(f"RULE_PLAN_WITHOUT_MARKDOWN_SOURCE: {rule_id}")
+        fields = {
+            item["field"]: item["label"]
+            for item in plan.get("comparison", {}).get("fields", [])
+            if isinstance(item, dict) and isinstance(item.get("field"), str)
+            and isinstance(item.get("label"), str)
+        }
+        result.append({"rule_id": rule_id, "title": plan.get("display_title") or path.stem,
+                       "file": path, "fields": fields})
+    return result
+
+
+def _anydoc_sections(
+    markdown: str, rule_texts: dict[str, str],
+    execution_plans: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, str]:
     """Group each module's complete AnyDoc section, excluding TOC hits and the next peer section."""
+    if execution_plans is None:
+        _, execution_plans, _ = load_investment_rule_definitions()
     lines = markdown.splitlines()
     candidates: list[tuple[int, int, int, str]] = []
-    for rule in MODULE_RULES:
+    rules = _rule_definitions(execution_plans)
+    for rule in rules:
         rule_id = rule["rule_id"]
-        aliases = title_aliases(rule_texts[rule_id])
+        plan = (execution_plans or {}).get(rule_id)
+        aliases = _rule_search_aliases(rule_texts[rule_id], plan)
         for index, line in enumerate(lines):
-            for span in _alias_spans(line, aliases):
+            for span in _heading_alias_spans(lines, index, aliases):
                 start = 0 if parse_heading(line) else span[0]
                 candidates.append((index, start, span[1], rule_id))
 
     def score(candidate: tuple[int, int, int, str]) -> int:
         index, offset, _, rule_id = candidate
+        plan = (execution_plans or {}).get(rule_id)
         end = min(len(lines), index + SECTION_SCORE_LOOKAHEAD + 1)
-        depth = _heading_depth(lines[index])
+        depth = _heading_depth_at(lines, index)
         if depth is not None:
             for next_index in range(index + 1, end):
-                next_depth = _heading_depth(lines[next_index])
+                next_depth = _heading_depth_at(lines, next_index)
                 if next_depth is not None and next_depth <= depth:
                     end = next_index
                     break
         window = lines[index][offset:] + "\n" + "\n".join(lines[index + 1:end])
         table_lines = len(markdown_rows(window))
-        aliases = _header_aliases(rule_texts[rule_id])
+        aliases = _header_aliases(plan)
         compact_window = _normal(window)
         recognized_headers = sum(
             1 for values in aliases.values()
@@ -146,13 +301,17 @@ def _anydoc_sections(markdown: str, rule_texts: dict[str, str]) -> dict[str, str
         return table_lines + recognized_headers * 3 - contents_penalty
 
     def heading_number(candidate: tuple[int, int, int, str]) -> str | None:
-        heading = parse_heading(lines[candidate[0]])
-        return heading.number if heading and heading.style=='arabic' else None
+        info = _heading_info(lines, candidate[0])
+        return info[0] if info and info[0].isdigit() else None
 
     selected: dict[str, list[tuple[int, int, int, str]]] = {}
-    for rule in MODULE_RULES:
+    for rule in rules:
         options = [candidate for candidate in candidates if candidate[3] == rule["rule_id"]]
         if options:
+            aliases = _rule_search_aliases(rule_texts[rule["rule_id"]], (execution_plans or {}).get(rule["rule_id"]))
+            most_specific = max(_heading_alias_specificity(lines, candidate[0], aliases) for candidate in options)
+            options = [candidate for candidate in options
+                       if _heading_alias_specificity(lines, candidate[0], aliases) == most_specific]
             best_score = max(score(candidate) for candidate in options)
             if best_score >= 0:
                 # Keep a nearby parent section heading when its child heading
@@ -163,12 +322,12 @@ def _anydoc_sections(markdown: str, rule_texts: dict[str, str]) -> dict[str, str
                 ]
                 plausible.sort(key=lambda candidate: (candidate[0], candidate[1]))
                 shallowest = min(
-                    (_heading_depth(lines[candidate[0]]) or _heading_depth(lines[candidate[0]][candidate[1]:]) or 99)
+                    (_heading_depth_at(lines, candidate[0]) or _heading_depth(lines[candidate[0]][candidate[1]:]) or 99)
                     for candidate in plausible
                 )
                 parent_candidates = [
                     candidate for candidate in plausible
-                    if (_heading_depth(lines[candidate[0]]) or _heading_depth(lines[candidate[0]][candidate[1]:]) or 99) == shallowest
+                    if (_heading_depth_at(lines, candidate[0]) or _heading_depth(lines[candidate[0]][candidate[1]:]) or 99) == shallowest
                 ]
                 if shallowest < 99:
                     parent_number = heading_number(parent_candidates[0])
@@ -185,7 +344,7 @@ def _anydoc_sections(markdown: str, rule_texts: dict[str, str]) -> dict[str, str
                             candidate for candidate in plausible
                             if (number := heading_number(candidate))
                             and number.rsplit(".", 1)[0] == parent_prefix.rsplit(".", 1)[0]
-                            and (_heading_depth(lines[candidate[0]]) or _heading_depth(lines[candidate[0]][candidate[1]:]) or 99) == shallowest
+                            and (_heading_depth_at(lines, candidate[0]) or _heading_depth(lines[candidate[0]][candidate[1]:]) or 99) == shallowest
                         ]
                         if not selected[rule["rule_id"]]:
                             selected[rule["rule_id"]] = [parent_candidates[0]]
@@ -201,11 +360,11 @@ def _anydoc_sections(markdown: str, rule_texts: dict[str, str]) -> dict[str, str
     gathered: dict[str, list[str]] = {}
     for start_line, start_offset, _, rule_id in ordered:
         prefix = lines[start_line][:start_offset]
-        depth = _heading_depth(lines[start_line]) or _heading_depth(lines[start_line][start_offset:]) or _heading_depth(prefix)
+        depth = _heading_depth_at(lines, start_line) or _heading_depth(lines[start_line][start_offset:]) or _heading_depth(prefix)
         boundaries = [(line_no,offset) for line_no,offset,_,other_id in ordered
                       if other_id!=rule_id and (line_no,offset)>(start_line,start_offset)]
         for index in range(start_line+1,len(lines)):
-            candidate_depth = _heading_depth(lines[index])
+            candidate_depth = _heading_depth_at(lines, index)
             if candidate_depth is not None and depth is not None and candidate_depth<=depth:
                 boundaries.append((index,0))
                 break
@@ -251,23 +410,27 @@ def _chapter_contexts(
     sections: dict[str, str],
     pages: list[dict[str, Any]],
     rule_texts: dict[str, str],
+    execution_plans: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Assemble module content before extraction while retaining physical source blocks."""
+    if execution_plans is None:
+        _, execution_plans, _ = load_investment_rule_definitions()
     contexts: dict[str, dict[str, Any]] = {}
-    for rule in MODULE_RULES:
+    for rule in _rule_definitions(execution_plans):
         rule_id = rule["rule_id"]
         section = sections.get(rule_id, "")
         if not section:
             continue
 
         page_numbers = _physical_pages_in_markdown(section, pages)
-        aliases = title_aliases(rule_texts[rule_id])
+        plan = (execution_plans or {}).get(rule_id)
+        aliases = _rule_search_aliases(rule_texts[rule_id], plan)
         # Printed page footers are the primary mapping. A matching heading is a
         # useful fallback when a parser omits the footer from its Markdown.
         if not page_numbers:
             header_terms = [
                 alias
-                for values in _header_aliases(rule_texts[rule_id]).values()
+                for values in _header_aliases(plan).values()
                 for alias in values
             ]
             page_scores = []
@@ -323,10 +486,7 @@ def _chapter_contexts(
 def _format_chapter_contexts(contexts: dict[str, dict[str, Any]]) -> str:
     """Render complete section structure first, then page-addressable source blocks."""
     rendered = []
-    for rule in MODULE_RULES:
-        context = contexts.get(rule["rule_id"])
-        if not context:
-            continue
+    for rule_id, context in contexts.items():
         source_pages = []
         for page in context["physical_pages"]:
             blocks = "\n".join(
@@ -336,7 +496,7 @@ def _format_chapter_contexts(contexts: dict[str, dict[str, Any]]) -> str:
             source_pages.append(f"[PHYSICAL PAGE {page['physical_page']}]\n{blocks}")
         source_page_text = "\n\n".join(source_pages)
         rendered.append(
-            f"【章节：{rule['rule_id']}】\n"
+            f"【章节：{rule_id}】\n"
             "[章节归集内容，包含跨页正文、表格和表注；先依据本模块规则分类]\n"
             f"{context['section_markdown']}\n"
             "[章节对应的 PDF 原文区块，仅用于逐字引用与物理页码核验]\n"
@@ -396,27 +556,36 @@ def _read_pdf(content: bytes, filename: str) -> tuple[Any, list[dict[str, Any]]]
     return document, pages
 
 
-def _candidate_pages(pages: list[dict[str, Any]], rule_texts: dict[str, str]) -> set[int]:
+def _candidate_pages(
+    pages: list[dict[str, Any]], rule_texts: dict[str, str],
+    execution_plans: dict[str, dict[str, Any]] | None = None,
+) -> set[int]:
+    if execution_plans is None:
+        _, execution_plans, _ = load_investment_rule_definitions()
     selected = {1, 2, 3, len(pages)}
-    for rule in MODULE_RULES:
-        text = rule_texts[rule["rule_id"]]
-        aliases = title_aliases(text)
+    for rule in _rule_definitions(execution_plans):
+        rule_id = rule["rule_id"]
+        text = rule_texts[rule_id]
+        plan = (execution_plans or {}).get(rule_id)
+        aliases = _rule_search_aliases(text, plan)
         module_matches = []
         for page in pages:
             folded = _normal(page["text"])
             if any(_normal(alias) in folded for alias in aliases if alias):
                 module_matches.append(page["page"])
         if not module_matches:
-            # Heading variants sometimes omit one word; use the title's unique domain terms.
-            terms = {
-                "investment.asset_allocation": ("资产组合", "权益投资", "银行存款和结算备付金"),
-                "investment.industry_stock_portfolio": ("行业分类", "行业代码", "公允价值", "净值比例"),
-                "investment.stock_holdings": ("股票代码", "持有数量", "股票投资明细"),
-            }[rule["rule_id"]]
-            module_matches = [
-                page["page"] for page in pages
-                if sum(term in page["text"] for term in terms) >= 2
+            header_terms = [
+                alias for values in _header_aliases(plan).values()
+                for alias in values if alias
             ]
+            clues = list(dict.fromkeys([*aliases, *header_terms]))
+            scores = [
+                (sum(_normal(clue) in _normal(page["text"]) for clue in clues), page["page"])
+                for page in pages
+            ]
+            best_score = max((score for score, _ in scores), default=0)
+            if best_score >= 2:
+                module_matches = [number for score, number in scores if score == best_score]
         for page_num in module_matches:
             selected.update(range(max(1, page_num - 1), min(len(pages), page_num + 1) + 1))
     return selected
@@ -498,22 +667,42 @@ def _json_object_after_key(text: str, key: str) -> dict[str, Any] | None:
 
 
 def _module_retry_schema(rule: dict[str, Any]) -> dict[str, Any]:
+    dynamic_fields = _row_identity_keys(rule)
+    row = {
+        "row_label": "原文行名",
+        "row_key": "可选稳定键",
+        "row_page": 1,
+        "row_quote": "覆盖行名和规则声明身份字段的连续原文",
+    }
+    for key in dynamic_fields:
+        if key not in row:
+            row[key] = None
     example_fields = {
         field: {"raw_text": "原文值", "unit": "原文单位", "page": 1, "quote": "含原文值的连续原文"}
         for field in rule["fields"]
     }
+    row["fields"] = example_fields
     return {
         "rule_id": rule["rule_id"],
         "found": True,
         "scope": {},
-        "rows": [{
-            "row_label": "原文行名",
-            "row_key": "可选稳定键",
-            "row_page": 1,
-            "row_quote": "覆盖行名和身份字段的连续原文",
-            "fields": example_fields,
-        }],
+        "rows": [row],
     }
+
+
+def _row_identity_keys(rule: dict[str, Any]) -> list[str]:
+    """Return protocol fields plus identity/scope fields declared by the rule plan."""
+    matching = rule.get("row_matching", {})
+    if not isinstance(matching, dict):
+        matching = {}
+    return list(dict.fromkeys([
+        "row_key", "row_id", "row_label", "parent_key",
+        *matching.get("identity_fields", []),
+        *matching.get("fallback_identity_fields", []),
+        *matching.get("scope_fields", []),
+        *matching.get("hierarchy_fields", []),
+        *matching.get("identity_headers", {}).keys(),
+    ]))
 
 
 def _contains(haystack: str, needle: str) -> bool:
@@ -524,181 +713,50 @@ def _rect_array(rect: fitz.Rect) -> list[float]:
     return [round(float(rect.x0), 2), round(float(rect.y0), 2), round(float(rect.x1), 2), round(float(rect.y1), 2)]
 
 
-def _header_aliases(rule_text: str) -> dict[str, list[str]]:
+def _header_aliases(execution_plan: dict[str, Any]) -> dict[str, list[str]]:
+    """Resolve PDF table headers only from the validated generated plan."""
+    if not isinstance(execution_plan, dict):
+        raise ValueError("RULE_EXECUTION_PLAN_REQUIRED: 表格列语义必须来自当前规则执行计划")
     aliases: dict[str, list[str]] = {}
-    in_section = False
-    for line in rule_text.splitlines():
-        if line.startswith("## "):
-            in_section = line[3:].strip() == "pdf_header_aliases"
-            continue
-        if not in_section or not line.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if len(cells) < 2 or cells[0].strip("` ") == "column_key" or set(cells[0].strip()) <= {"-", ":"}:
-            continue
-        key = cells[0].strip("` ")
-        values = re.split(r"[、，,；;]", cells[1].strip("` "))
-        aliases[key] = [value.strip(" `。；;，,") for value in values if value.strip(" `。；;，,")]
+    matching = execution_plan.get("row_matching", {})
+    identity_headers = matching.get("identity_headers", {}) if isinstance(matching, dict) else {}
+    if isinstance(identity_headers, dict):
+        aliases.update({key: values for key, values in identity_headers.items() if isinstance(values, list)})
+    comparison = execution_plan.get("comparison", {})
+    fields = comparison.get("fields", []) if isinstance(comparison, dict) else []
+    if isinstance(fields, list):
+        for field in fields:
+            if isinstance(field, dict) and isinstance(field.get("field"), str):
+                values = field.get("source_headers", [])
+                if isinstance(values, list):
+                    aliases[field["field"]] = values
     return aliases
 
 
-def _row_completeness_specs(rule_text: str) -> list[tuple[str, str]]:
-    """Read optional row-recovery requirements from a module rule table."""
-    specs = []
-    in_section = False
-    for line in rule_text.splitlines():
-        if line.startswith("## "):
-            in_section = line[3:].strip() == "row_completeness"
-            continue
-        if not in_section or not line.startswith("|"):
-            continue
-        cells = [cell.strip().strip("` ") for cell in line.strip().strip("|").split("|")]
-        if len(cells) < 2 or cells[0] == "row_label" or set(cells[0]) <= {"-", ":"}:
-            continue
-        if cells[0] and cells[1]:
-            specs.append((cells[0], cells[1]))
-    return specs
-
-
-def _recover_required_source_rows(
-    raw_module: dict[str, Any],
-    rule: dict[str, Any],
-    rule_text: str,
-    source_pages: set[int],
-    section_markdown: str,
-    table_cache: dict[int, list[dict[str, Any]]],
-    header_maps: dict[str, dict[int, dict[int, dict[str, int]]]],
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Recover a model-omitted row only from a unique, header-mapped PDF table row."""
-    specs = [
-        (label, policy)
-        for label, policy in _row_completeness_specs(rule_text)
-        if policy == "recover_from_unique_mapped_source_row_if_model_omits"
-    ]
-    if not specs or not source_pages:
-        return [], []
-
-    existing_rows = raw_module.get("rows") if isinstance(raw_module.get("rows"), list) else []
-    existing_labels = {
-        _normal(row.get("row_label") or row.get("industry_name") or row.get("label"))
-        for row in existing_rows if isinstance(row, dict)
+def _rule_for_execution_plan(rule: dict[str, Any], execution_plan: dict[str, Any] | None) -> dict[str, Any]:
+    """Adapt declarative fields to the existing evidence pipeline without rule-ID branches."""
+    if not isinstance(execution_plan, dict):
+        raise ValueError(f"RULE_EXECUTION_PLAN_REQUIRED: {rule.get('rule_id', '<unknown>')}")
+    comparison = execution_plan.get("comparison", {})
+    row_matching = execution_plan.get("row_matching", {})
+    fields = comparison.get("fields", []) if isinstance(comparison, dict) else []
+    field_labels = {
+        item["field"]: item["label"]
+        for item in fields
+        if isinstance(item, dict) and isinstance(item.get("field"), str) and isinstance(item.get("label"), str)
     }
-    scope = raw_module.get("scope") if isinstance(raw_module.get("scope"), dict) else {}
-    market_scope = scope.get("market_scope")
-    recovered: list[dict[str, Any]] = []
-    warnings: list[str] = []
-    # A chapter may continue immediately after its last mapped printed-page
-    # footer. Restrict this adjacency window to pages already selected for
-    # document analysis, then rely on the module's mapped table columns below.
-    module_table_pages = {
-        page_number
-        for page_number in table_cache
-        if any(abs(page_number - source_page) <= 1 for source_page in source_pages)
+    if not field_labels:
+        raise ValueError(f"RULE_PLAN_HAS_NO_COMPARISON_FIELDS: {execution_plan.get('rule_identity')}")
+    field_operations = {
+        item["field"]: item["operation"]
+        for item in fields
+        if isinstance(item, dict) and isinstance(item.get("field"), str)
+        and isinstance(item.get("operation"), str)
     }
-
-    for label, _ in specs:
-        if _normal(label) in existing_labels:
-            continue
-        candidates = []
-        ambiguous_source_rows = 0
-        for page_number in sorted(module_table_pages):
-            page_maps = header_maps.get(rule["rule_id"], {}).get(page_number, {})
-            for table_index, table in enumerate(table_cache.get(page_number, [])):
-                mapping = page_maps.get(table_index, {})
-                if not set(rule["fields"]).issubset(mapping):
-                    continue
-                for row_index, matrix_row in enumerate(table["matrix"]):
-                    if not any(_normal(cell) == _normal(label) for cell in matrix_row if cell is not None):
-                        continue
-                    values = {}
-                    for field_key in rule["fields"]:
-                        column = mapping[field_key]
-                        raw_text = str(matrix_row[column] or "").strip() if column < len(matrix_row) else ""
-                        value_kind = normalize_numeric(raw_text, percent=field_key.endswith("ratio"))["kind"]
-                        if value_kind not in {"NUMBER", "DASH"}:
-                            break
-                        values[field_key] = raw_text
-                    if len(values) != len(rule["fields"]):
-                        ambiguous_source_rows += 1
-                        continue
-                    row_quote = " ".join(str(cell).strip() for cell in matrix_row if cell is not None and str(cell).strip())
-                    candidates.append({
-                        "page": page_number,
-                        "table_index": table_index,
-                        "row_index": row_index,
-                        "quote": row_quote,
-                        "values": values,
-                        "table": table,
-                        "mapping": mapping,
-                    })
-        markdown_row_present = _markdown_has_required_row(section_markdown, label, len(rule["fields"]))
-        if not candidates and not ambiguous_source_rows:
-            if markdown_row_present:
-                warnings.append(f"章节内容包含“{label}”行，但 PyMuPDF 未能确认其表格列，需复核。")
-            continue
-        if len(candidates) != 1 or ambiguous_source_rows or market_scope not in {"domestic", "hk_connect", "other"}:
-            warnings.append(f"源表包含“{label}”行，但其候选行或市场范围无法唯一确认。")
-            continue
-
-        source = candidates[0]
-        fields = {}
-        for field_key, raw_text in source["values"].items():
-            column = source["mapping"][field_key]
-            header = " ".join(
-                str(header_row[column] or "")
-                for header_row in source["table"]["matrix"][:3]
-                if column < len(header_row)
-            )
-            unit = "%" if field_key.endswith("ratio") else ""
-            if field_key.endswith("ratio") and not any(symbol in header for symbol in ("%", "％", "比例")):
-                unit = ""
-            elif "亿元" in header:
-                unit = "亿元"
-            elif "万元" in header:
-                unit = "万元"
-            elif "元" in header:
-                unit = "元"
-            unit = source["table"].get("column_units", {}).get(rule["rule_id"], {}).get(field_key, unit)
-            fields[field_key] = {
-                "raw_text": raw_text,
-                "unit": unit,
-                "page": source["page"],
-                "quote": source["quote"],
-            }
-        recovered.append({
-            "row_key": "total",
-            "row_label": label,
-            "industry_name": label,
-            "market_scope": market_scope,
-            "row_page": source["page"],
-            "row_quote": source["quote"],
-            "fields": fields,
-            "source_recovered": True,
-        })
-    return recovered, warnings
-
-
-def _markdown_has_required_row(section_markdown: str, label: str, metric_count: int) -> bool:
-    """Detect a standalone configured row in Markdown so parser misses cannot pass silently."""
-    for line in section_markdown.splitlines():
-        cleaned = re.sub(r"</?[^>]+>", "", line).strip()
-        if not cleaned:
-            continue
-        cells = [cell.strip() for cell in cleaned.strip("|").split("|")]
-        if any(_normal(cell) == _normal(label) for cell in cells):
-            numeric_cells = sum(
-                normalize_numeric(cell)["kind"] in {"NUMBER", "DASH"}
-                for cell in cells if _normal(cell) != _normal(label)
-            )
-            if numeric_cells >= metric_count:
-                return True
-            continue
-        if not re.search(rf"(?:^|\s){re.escape(label)}(?=\s|$)", cleaned):
-            continue
-        tokens = re.findall(r"(?<![\w])(?:[-—–－]|\d[\d,，]*(?:\.\d+)?%?)(?![\w])", cleaned)
-        if sum(normalize_numeric(token)["kind"] in {"NUMBER", "DASH"} for token in tokens) >= metric_count:
-            return True
-    return False
+    return {**rule, "rule_id": execution_plan["rule_identity"],
+            "title": execution_plan["display_title"], "fields": field_labels,
+            "field_operations": field_operations,
+            "row_matching": row_matching if isinstance(row_matching, dict) else {}}
 
 
 def _collect_tables(document: Any, page_numbers: set[int]) -> dict[int, list[dict[str, Any]]]:
@@ -715,14 +773,50 @@ def _collect_tables(document: Any, page_numbers: set[int]) -> dict[int, list[dic
                 matrix = table.extract()
                 columns = int(table.col_count)
                 cells_by_row = [list(row.cells) for row in table.rows]
+                table_bbox = fitz.Rect(table.bbox)
             except Exception:
                 continue
             if matrix and columns > 0:
+                nearby_unit_context = []
+                # PyMuPDF may merge the unit caption and the table body into a
+                # single text block. The merged block then extends below the
+                # table top, so block-level distance checks miss a caption
+                # that is visibly just above the table. Inspect text lines to
+                # keep the spatial association while avoiding page-wide text.
+                try:
+                    text_blocks = page.get_text("dict").get("blocks", [])
+                    for block in text_blocks:
+                        for line in block.get("lines", []):
+                            text = "".join(
+                                str(span.get("text") or "") for span in line.get("spans", [])
+                            ).strip()
+                            if not text:
+                                continue
+                            line_rect = fitz.Rect(line["bbox"])
+                            vertical_gap = table_bbox.y0 - line_rect.y1
+                            horizontal_overlap = (
+                                min(table_bbox.x1, line_rect.x1) - max(table_bbox.x0, line_rect.x0)
+                            )
+                            if 0 <= vertical_gap <= 48 and horizontal_overlap > 0:
+                                nearby_unit_context.append((vertical_gap, text))
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    # Keep compatibility with lightweight page adapters that
+                    # expose only PyMuPDF's block-level text interface.
+                    for block in page.get_text("blocks"):
+                        if len(block) < 5 or not str(block[4]).strip():
+                            continue
+                        block_rect = fitz.Rect(block[:4])
+                        vertical_gap = table_bbox.y0 - block_rect.y1
+                        horizontal_overlap = min(table_bbox.x1, block_rect.x1) - max(table_bbox.x0, block_rect.x0)
+                        if 0 <= vertical_gap <= 48 and horizontal_overlap > 0:
+                            nearby_unit_context.append((vertical_gap, str(block[4]).strip()))
+                unit_context = " ".join(text for _, text in sorted(nearby_unit_context))
                 records.append({
                     "matrix": matrix,
                     "columns": columns,
                     "cells_by_row": cells_by_row,
                     "page_width": float(page.rect.width),
+                    "unit_context": unit_context,
                 })
         result[page_number] = records
     return result
@@ -779,11 +873,12 @@ def _cross_page_column_tolerance(_rule_text: str | None = None) -> float:
 
 def capture_investment_rule_snapshot() -> dict[str, Any]:
     """Capture one immutable execution bundle for a comparison task."""
-    rule_texts = {rule["rule_id"]: effective_rule_text(Path(rule["file"])) for rule in MODULE_RULES}
-    common_rules = effective_rule_text(COMMON_RULE_FILE)
+    rule_texts, execution_plans, _ = load_investment_rule_definitions()
+    common_rules = COMMON_RULE_FILE.read_text(encoding="utf-8")
     return {
         **capture_rule_set("investment"),
         "rule_texts": rule_texts,
+        "execution_plans": execution_plans,
         "common_rules": common_rules,
     }
 
@@ -792,40 +887,89 @@ def _header_column_maps(
     tables: dict[int, list[dict[str, Any]]],
     aliases_by_rule: dict[str, dict[str, list[str]]],
     *,
+    required_fields_by_rule: dict[str, set[str]],
     column_tolerance: float,
 ) -> dict[str, dict[int, dict[int, dict[str, int]]]]:
     maps: dict[str, dict[int, dict[int, dict[str, int]]]] = {}
     for rule_id, aliases in aliases_by_rule.items():
         maps[rule_id] = {}
-        required = {
-            "investment.asset_allocation": {"amount", "ratio_of_total_assets"},
-            "investment.industry_stock_portfolio": {"industry_code", "industry_name", "fair_value", "ratio_of_net_assets"},
-            "investment.stock_holdings": {"quantity", "fair_value", "ratio_of_net_assets"},
-        }[rule_id]
+        # Header mapping only establishes candidate value columns. Whether a
+        # candidate table belongs to this chapter is checked later against its
+        # source rows and the complete chapter text. Semantic row keys do not
+        # necessarily have a physical identity column in the PDF.
+        required = required_fields_by_rule.get(rule_id, set())
         header_tables: dict[int, set[int]] = {}
         for page_number in sorted(tables):
             records = tables[page_number]
             for table_index, table in enumerate(records):
                 columns = table["columns"]
-                mapping: dict[str, int] = {}
+                header_texts = [
+                    _normal(" ".join(
+                        str(row[col] or "")
+                        for row in table["matrix"][:3]
+                        if col < len(row)
+                    ))
+                    for col in range(columns)
+                ]
+                candidates: dict[str, dict[int, int]] = {}
                 for key, terms in aliases.items():
-                    hits = []
-                    for col in range(columns):
-                        header_text = " ".join(
-                            str(row[col] or "")
-                            for row in table["matrix"][:3]
-                            if col < len(row)
-                        )
-                        if any(_normal(term) in _normal(header_text) for term in terms):
-                            hits.append(col)
-                    if len(hits) == 1:
-                        mapping[key] = hits[0]
+                    scores: dict[int, int] = {}
+                    for col, header_text in enumerate(header_texts):
+                        matched_terms = [_normal(term) for term in terms if _normal(term) in header_text]
+                        if matched_terms:
+                            # Longer rule-provided labels are stronger evidence
+                            # for a column than generic words such as “比例”.
+                            scores[col] = max(map(len, matched_terms))
+                    candidates[key] = scores
+
+                # Resolve overlapping aliases as one table-level assignment.
+                # A weak alias for one field must not steal the column that is
+                # the only valid match for another field. If the best mapping
+                # is ambiguous, fail closed and leave the table unmapped.
+                required_fields_order = sorted(required.intersection(candidates))
+                assignments: list[tuple[int, dict[str, int]]] = []
+
+                def assign(index: int, used: set[int], chosen: dict[str, int], score: int) -> None:
+                    if index >= len(required_fields_order):
+                        assignments.append((score, chosen.copy()))
+                        return
+                    field = required_fields_order[index]
+                    for col, strength in candidates[field].items():
+                        if col not in used:
+                            chosen[field] = col
+                            assign(index + 1, used | {col}, chosen, score + strength)
+                            chosen.pop(field, None)
+
+                assign(0, set(), {}, 0)
+                mapping: dict[str, int] = {}
+                if required_fields_order and assignments:
+                    best_score = max(score for score, _ in assignments)
+                    best = [value for score, value in assignments if score == best_score]
+                    if len(best) == 1:
+                        mapping.update(best[0])
+                if not required_fields_order:
+                    for key, scores in candidates.items():
+                        if len(scores) == 1:
+                            mapping[key] = next(iter(scores))
+                for key, scores in candidates.items():
+                    if key in mapping:
+                        continue
+                    available = {col: score for col, score in scores.items() if col not in mapping.values()}
+                    if available:
+                        best_score = max(available.values())
+                        best = [col for col, score in available.items() if score == best_score]
+                        if len(best) == 1:
+                            mapping[key] = best[0]
                 if mapping:
                     header_tables.setdefault(page_number, set()).add(table_index)
                 if required.issubset(mapping):
                     maps[rule_id].setdefault(page_number, {})[table_index] = mapping
                     table.setdefault("column_units", {})[rule_id] = {
-                        key: column_unit(key, " ".join(str(row[column] or "") for row in table["matrix"][:3] if column < len(row)))
+                        key: column_unit(
+                            key,
+                            " ".join(str(row[column] or "") for row in table["matrix"][:3] if column < len(row)),
+                            str(table.get("unit_context") or ""),
+                        )
                         for key, column in mapping.items()
                     }
 
@@ -1028,6 +1172,7 @@ def _verify_field(
     *,
     rule_id: str,
     row_label: str,
+    operation: str = "decimal",
     table_cache: dict[int, list[dict[str, Any]]],
     header_maps: dict[str, dict[int, dict[int, dict[str, int]]]],
 ) -> dict[str, Any] | None:
@@ -1043,20 +1188,134 @@ def _verify_field(
         document, pages, source, table_cache=table_cache, header_maps=header_maps,
         rule_id=rule_id, row_label=row_label, field_key=field_name,
     )
-    normalized = normalize_numeric(raw, percent=field_name.endswith("ratio"))
+    unit = str(value.get("unit") or "")
+    unit_source = "model" if unit else None
+    if not unit:
+        reference = value.get("source_ref")
+        if isinstance(reference, dict):
+            table_index = reference.get("table")
+            try:
+                page_number = int(value.get("page"))
+            except (TypeError, ValueError):
+                page_number = 0
+            page_tables = table_cache.get(page_number, [])
+            if type(table_index) is int and 0 <= table_index < len(page_tables):
+                unit = str(page_tables[table_index].get("column_units", {})
+                           .get(rule_id, {}).get(field_name) or "")
+                if unit:
+                    unit_source = "mapped_table_header"
+    if operation == "decimal":
+        percent = any(token in unit for token in ("%", "％")) or any(
+            token in raw for token in ("%", "％")
+        )
+        normalized = normalize_numeric(raw, percent=percent)
+    else:
+        normalized = {"value": _normal(raw), "kind": "TEXT"}
     return {
         "raw_text": raw,
         "normalized_value": normalized["value"],
         "value_kind": normalized["kind"],
-        "unit": str(value.get("unit") or ""),
+        "unit": unit,
+        "unit_source": unit_source,
         "evidence": evidence,
+    }
+
+
+def _row_evidence_from_field_cells(
+    fields: dict[str, Any], row_label: str, pages: list[dict[str, Any]],
+    table_cache: dict[int, list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    """Locate a row from its verified field cells without relying on a module rule.
+
+    This is useful when PDF text order makes the model's row quote unlocatable,
+    while every compared cell has already been tied to the same physical table
+    row. The row label must also be present in that source row.
+    """
+    if not fields or not row_label:
+        return None
+    references = []
+    for value in fields.values():
+        evidence = value.get("evidence") if isinstance(value, dict) else None
+        reference = evidence.get("source_ref") if isinstance(evidence, dict) else None
+        page = evidence.get("page") if isinstance(evidence, dict) else None
+        if not isinstance(evidence, dict) or evidence.get("status") != "LOCATED":
+            return None
+        if not isinstance(reference, dict) or type(page) is not int:
+            return None
+        table_index, row_index = reference.get("table"), reference.get("row")
+        if type(table_index) is not int or type(row_index) is not int:
+            return None
+        references.append((page, table_index, row_index, reference))
+    locations = {(page, table_index, row_index) for page, table_index, row_index, _ in references}
+    if len(locations) != 1:
+        return None
+    page, table_index, row_index = next(iter(locations))
+    if not 1 <= page <= len(pages):
+        return None
+    page_tables = table_cache.get(page, [])
+    if not 0 <= table_index < len(page_tables):
+        return None
+    table = page_tables[table_index]
+    matrix, cell_rows = table.get("matrix", []), table.get("cells_by_row", [])
+    if not 0 <= row_index < min(len(matrix), len(cell_rows)):
+        return None
+    cells = matrix[row_index]
+    if _normal(row_label) not in _normal(" ".join(str(cell or "") for cell in cells)):
+        return None
+    rectangles = [fitz.Rect(cell) for cell in cell_rows[row_index]
+                  if cell is not None and len(cell) == 4]
+    if not rectangles:
+        return None
+    page_info = pages[page - 1]
+    bbox = _rect_array(fitz.Rect(
+        min(rect.x0 for rect in rectangles), min(rect.y0 for rect in rectangles),
+        max(rect.x1 for rect in rectangles), max(rect.y1 for rect in rectangles),
+    ))
+    source_ref = references[0][3]
+    quote = " ".join(str(cell or "").strip() for cell in cells if str(cell or "").strip())
+    return {
+        "page": page,
+        "quote": quote,
+        "bbox": bbox,
+        "page_width": page_info["width"],
+        "page_height": page_info["height"],
+        "status": "LOCATED",
+        "source_ref": source_ref,
+        "source_ref_recovered": "shared_verified_field_row",
     }
 
 
 def _iso_dates(text: str) -> set[str]:
     dates = set()
+    chinese_digits = {"〇": "0", "零": "0", "一": "1", "二": "2", "三": "3", "四": "4",
+                      "五": "5", "六": "6", "七": "7", "八": "8", "九": "9"}
+
+    def chinese_number(token: str) -> str:
+        if not token:
+            return token
+        if all(character in chinese_digits for character in token):
+            return "".join(chinese_digits[character] for character in token)
+        if any(character in "十百" for character in token):
+            total, section, number = 0, 0, 0
+            for character in token:
+                if character in chinese_digits:
+                    number = int(chinese_digits[character])
+                elif character == "十":
+                    section += (number or 1) * 10
+                    number = 0
+                elif character == "百":
+                    section += (number or 1) * 100
+                    number = 0
+            return str(total + section + number)
+        return token
+
+    text = re.sub(
+        r"([〇零一二三四五六七八九十百]+)(?=[年月日])",
+        lambda match: chinese_number(match.group(1)),
+        unicodedata.normalize("NFKC", text),
+    )
     pattern = re.compile(r"(20\d{2})\s*[年/.-]\s*(\d{1,2})\s*[月/.-]\s*(\d{1,2})\s*日?")
-    for year, month, day in pattern.findall(unicodedata.normalize("NFKC", text)):
+    for year, month, day in pattern.findall(text):
         try:
             dates.add(date(int(year), int(month), int(day)).isoformat())
         except ValueError:
@@ -1064,7 +1323,7 @@ def _iso_dates(text: str) -> set[str]:
     # A range may omit the repeated year in its end date.
     ranges = re.findall(
         r"(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*起?\s*(?:至|到)\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日",
-        unicodedata.normalize("NFKC", text),
+        text,
     )
     for year, start_month, start_day, month, day in ranges:
         try:
@@ -1081,6 +1340,39 @@ def _metadata_value_matches(key: str, value: str, quote: str) -> bool:
         target = value.replace("/", "-").strip()
         return bool(re.fullmatch(r"20\d{2}-\d{2}-\d{2}", target) and target in _iso_dates(quote))
     return _contains(quote, value)
+
+
+def _labeled_period_end_candidates(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Find explicit period-end dates whose source text labels them as reporting periods.
+
+    This is a narrow evidence fallback for a missing or invalid model metadata claim.
+    It does not infer a period from arbitrary dates, and callers must reject conflicting
+    values across the document.
+    """
+    date_pattern = r"20\d{2}\s*(?:年\s*\d{1,2}\s*月\s*\d{1,2}\s*日?|[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,2})"
+    label_pattern = re.compile(
+        rf"(?P<quote>(?:投资组合报告\s*截止日|报告截止日|报告期末)\s*(?:为|是|[:：])?\s*(?P<date>{date_pattern}))"
+    )
+    candidates: list[dict[str, Any]] = []
+    for page in pages:
+        text = str(page.get("text") or "")
+        for match in label_pattern.finditer(unicodedata.normalize("NFKC", text)):
+            date_text = match.group("date")
+            dates = _iso_dates(date_text)
+            if len(dates) == 1:
+                candidates.append({
+                    "page": page.get("page"),
+                    "quote": match.group("quote"),
+                    "value": next(iter(dates)),
+                })
+    return candidates
+
+
+def _unique_labeled_period_end(pages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = _labeled_period_end_candidates(pages)
+    if len({item["value"] for item in candidates}) != 1:
+        return None
+    return candidates[0]
 
 
 def _verify_metadata(document: Any, pages: list[dict[str, Any]], raw: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1101,6 +1393,17 @@ def _verify_metadata(document: Any, pages: list[dict[str, Any]], raw: Any) -> tu
                 info[key] = None
         else:
             info[key] = None
+    if not info.get("period_end"):
+        candidate = _unique_labeled_period_end(pages)
+        if candidate:
+            value = candidate["value"]
+            quote = candidate["quote"]
+            evidence = _evidence(document, pages, {
+                "page": candidate["page"], "quote": quote, "raw_text": value,
+            })
+            if evidence["status"] in {"LOCATED", "QUOTE_ONLY"} and _metadata_value_matches("period_end", value, quote):
+                info["period_end"] = value
+                proofs["period_end"] = evidence
     return info, proofs
 
 
@@ -1131,13 +1434,9 @@ def _verify_module(
             "schema_normalization": {"identity_fields_unwrapped": 0, "identity_fields_invalid": 1},
             "evidence": [],
         }
-    recovered_rows, completeness_warnings = _recover_required_source_rows(
-        raw_module, rule, rule_text, source_pages, section_markdown, table_cache, header_maps,
-    )
-    rows = [*rows, *recovered_rows]
+    completeness_warnings = list(raw_module.get("source_warnings") or [])
     scope_raw = raw_module.get("scope") if isinstance(raw_module.get("scope"), dict) else {}
     validated_rows = []
-    completeness_warnings.extend(raw_module.get("source_warnings") or [])
     disclosure_warnings: list[str] = []
     verified_disclosures = _verify_disclosures(
         raw_module.get("disclosures"), section_markdown, pages, source_pages,
@@ -1154,7 +1453,8 @@ def _verify_module(
             continue
         identity: dict[str, Any] = {}
         row_warnings: list[str] = []
-        for key in MODEL_IDENTITY_FIELDS:
+        identity_keys = _row_identity_keys(rule)
+        for key in identity_keys:
             if key not in raw_row:
                 identity[key] = None
                 continue
@@ -1185,6 +1485,7 @@ def _verify_module(
             validated = _verify_field(
                 document, pages, field_value, str(field_key),
                 rule_id=rule["rule_id"], row_label=row_label,
+                operation=rule.get("field_operations", {}).get(str(field_key), "decimal"),
                 table_cache=table_cache, header_maps=header_maps,
             )
             if validated is None:
@@ -1199,24 +1500,21 @@ def _verify_module(
             table_cache=table_cache, header_maps=header_maps,
             rule_id=rule["rule_id"], row_label=row_label,
         )
-        total_row_with_located_metrics = (
-            rule["rule_id"] == "investment.industry_stock_portfolio"
-            and _normal(row_label) == "合计"
-            and all(
-                key in fields and fields[key]["evidence"]["status"] == "LOCATED"
-                for key in rule["fields"]
-            )
-        )
-        if not row_label or (row_evidence["status"] != "LOCATED" and not total_row_with_located_metrics):
+        if row_evidence["status"] != "LOCATED":
+            row_evidence = _row_evidence_from_field_cells(fields, row_label, pages, table_cache) or row_evidence
+        if not row_label or row_evidence["status"] != "LOCATED":
             unresolved = True
+        matching_plan = rule.get("row_matching", {})
+        nonliteral_identity_fields = {
+            *matching_plan.get("scope_fields", []),
+            *matching_plan.get("hierarchy_fields", []),
+        }
         identity_values = [
-            identity["industry_code"], identity["stock_code"], identity["rank"],
+            identity.get(key) for key in identity_keys
+            if key not in {"row_key", "row_id", "row_label", "parent_key"}
+            and key not in nonliteral_identity_fields
+            and identity.get(key) and _normal(identity.get(key)) != _normal(row_label)
         ]
-        identity_values.extend(
-            value
-            for value in (identity["industry_name"], identity["stock_name"])
-            if value and _normal(value) != _normal(row_label)
-        )
         # A located row label alone does not prove that its code/name/rank came
         # from that row. Always validate every supplied identity token against
         # the row quote so a bad key cannot silently become a single-sided row.
@@ -1224,38 +1522,26 @@ def _verify_module(
             unresolved = True
             row_warnings.append("row_quote_identity_mismatch")
         row_key = identity["row_key"] or ""
-        if rule["rule_id"] == "investment.asset_allocation":
-            allowed_keys = set(re.findall(r"^\|\s*`([^`]+)`\s*\|", effective_rule_text(Path(rule["file"])), re.MULTILINE))
-            # A manager-authored Chinese rule no longer needs a static row-key
-            # registry. Keep a model-derived semantic key only when it is a
-            # scalar identifier and the corresponding source row was located.
-            # This lets equivalent labels (for example “其他资产” and
-            # “其他各项资产”) align without maintaining per-label code aliases.
-            valid_semantic_key = bool(re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", row_key))
-            if row_key and row_key not in allowed_keys and (
-                not valid_semantic_key or row_evidence["status"] != "LOCATED"
-            ):
-                row_key = ""
-                if row_evidence["status"] != "LOCATED":
-                    unresolved = True
-        validated_rows.append({
+        validated_row = {
             "row_id": row_key or identity["row_id"] or f"unmapped:{index}",
             "row_key": row_key,
             "label": row_label,
             "parent_key": identity["parent_key"] or None,
-            "rank": identity["rank"],
             "rank_evidence": row_evidence,
             "row_evidence": row_evidence,
-            "market_scope": identity["market_scope"] or scope_raw.get("market_scope") or "unknown",
-            "investment_scope": identity["investment_scope"] or scope_raw.get("investment_scope") or "unknown",
-            "industry_code": identity["industry_code"] or "",
-            "industry_name": identity["industry_name"] or "",
-            "stock_code": identity["stock_code"] or "",
-            "stock_name": identity["stock_name"] or "",
             "fields": fields,
             "schema_warnings": sorted(set(row_warnings)),
             "source_recovered": bool(raw_row.get("source_recovered")),
-        })
+        }
+        for key in identity_keys:
+            if key in {"row_key", "row_id", "row_label", "parent_key"}:
+                continue
+            value = identity.get(key)
+            if value is None:
+                value = scope_raw.get(key)
+            if value is not None:
+                validated_row[key] = value
+        validated_rows.append(validated_row)
     required_fields = tuple(rule["fields"])
     if (not validated_rows and not verified_disclosures) or any(not all(key in row["fields"] for key in required_fields) for row in validated_rows):
         unresolved = True
@@ -1403,7 +1689,10 @@ def _chapter_plain_text(markdown: str) -> str:
 async def _extract_chapters(
     filename, role, provider, contexts, pages, rule_texts, tables, header_maps,
     candidate_numbers, trace_callback, force_refresh, document_hash, document,
+    execution_plans: dict[str, dict[str, Any]] | None = None,
 ):
+    if execution_plans is None:
+        _, execution_plans, _ = load_investment_rule_definitions()
     cache = ChapterCache()
     namespace = getattr(provider, "cache_namespace", None)
     use_cache = isinstance(namespace, dict) and os.getenv("PROSPECTUS_CACHE_ENABLED", "1") != "0"
@@ -1420,25 +1709,34 @@ async def _extract_chapters(
 
     async def extract(rule):
         rule_id = rule["rule_id"]
+        execution_plan = (execution_plans or {}).get(rule_id)
+        active_rule = _rule_for_execution_plan(rule, execution_plan)
         context = contexts.get(rule_id, {})
-        records = source_catalogue(context, rule, tables, header_maps, document_hash, role)
-        gaps = source_gaps(context, records, rule)
+        records = source_catalogue(context, active_rule, tables, header_maps, document_hash, role)
+        gaps = source_gaps(context, records, active_rule)
         source_mode = bool(records) and not gaps
-        scope = {"market_scope": "unknown", "investment_scope": "unknown",
-                 "disclosure_scope": "unknown", "limit": None} if rule is not MODULE_RULES[0] else {}
+        row_matching = active_rule.get("row_matching", {})
+        declared_scope_fields = row_matching.get("scope_fields", []) if isinstance(row_matching, dict) else []
+        scope = {field: "unknown" for field in declared_scope_fields}
+        scope.update({"disclosure_scope": "unknown", "limit": None})
+        disclosure_scope = dict(scope)
+        identity_fields = [
+            field for field in _row_identity_keys(active_rule)
+            if field not in {"row_key", "row_id", "row_label", "parent_key"}
+        ]
         schema = {"rule_id": rule_id, "found": True, "scope": scope, "rows": []}
         schema["disclosures"] = [{
             "status": "NO_DATA | NOT_DISCLOSED | UNCERTAIN",
             "period_end": "原文期间，优先 YYYY-MM-DD；不能确认则 null",
-            "scope": {"market_scope": "all | domestic | hk_connect | other | unknown",
-                      "investment_scope": "all | index | active | unknown",
-                      "disclosure_scope": "all | top_n | unknown", "limit": None},
+            "scope": disclosure_scope,
             "page": 1,
             "quote": "支持该状态的连续原文",
         }]
         if source_mode:
-            schema["rows"] = [{"source_id": "必须来自源表", "row_label": "原文行名", "row_key": None,
-                               "parent_key": None, "market_scope": "unknown", "investment_scope": "unknown"}]
+            source_row = {"source_id": "必须来自源表", "row_label": "原文行名", "row_key": None,
+                          "parent_key": None}
+            source_row.update({field: None for field in identity_fields if field not in source_row})
+            schema["rows"] = [source_row]
             source_text = (
                 "【章节 Markdown，包含续页、表注与子章节】\n" + context.get("section_markdown", "")
                 + "\n【PDF 源表行】\n" + render_catalogue(records)
@@ -1447,11 +1745,14 @@ async def _extract_chapters(
                 "源表行已由程序确认字段列。你只确认业务行身份、父子关系和统计范围。"
                 "每个源表 source_id 恰好返回一次，不合并、不遗漏、不补造。"
                 "无需生成 fields、金额、比例、页码或引用，程序会从源表取回。"
-                "行业代码、股票代码、股票名称和排名也由程序从源表取回。"
-                "row_key 按模块规则归类；row_label 须为该行原文标签。"
+                "执行计划声明且可从表格列映射的身份字段由程序从原始表格取回。"
+                "row_key 必须是跨文件稳定的业务身份标识；遵循当前规则对项目含义和名称对应的说明，规则明确为同一项目的不同原文名称必须使用同一标识。"
+                "规则未说明且无法从上下文确认身份时，不猜测同义关系，应保留待复核；不能只按序号或数值相同来确定身份。"
+                "row_key 不直接复制原文行名；"
+                "parent_key 必须引用父行的 row_key。row_label 始终保留该行原文标签。"
             )
         else:
-            schema.update(_module_retry_schema(rule))
+            schema.update(_module_retry_schema(active_rule))
             numbers = {page["physical_page"] for page in context.get("physical_pages", [])} or candidate_numbers
             source_text = _format_chapter_contexts({rule_id: context}) if context else ""
             if not context:
@@ -1459,12 +1760,18 @@ async def _extract_chapters(
             task = (
                 "本章节未能建立完整源表目录，按示例返回行和 fields。每个单元格包含原文 raw_text、unit、page、quote。"
                 "逐字引用必须来自对应物理页且连续；row_quote 覆盖行标签及身份字段，不生成坐标。"
-                "industry_code、industry_name、stock_code、stock_name、rank、row_key 等身份字段必须是标量，不能是对象。"
+                "row_key 必须是跨文件稳定的业务身份标识；遵循当前规则对项目含义和名称对应的说明，规则明确为同一项目的不同原文名称必须使用同一标识。"
+                "规则未说明且无法从上下文确认身份时，不猜测同义关系，应保留待复核；不能只按序号或数值相同来确定身份。"
+                f"规则声明的行身份字段（{', '.join(identity_fields) or 'row_key'}）必须是标量，不能是对象。"
             )
-        if rule is MODULE_RULES[0]:
-            schema["document_info"] = {key: {"value": "原文值或 null", "page": 1, "quote": "逐字原文"}
-                                       for key in ("fund_name", "fund_code", "disclosure_date", "period_end")}
-            task += "附带 document_info：基金名、基金代码、披露日期、报告期末；日期用 YYYY-MM-DD。招书的 period_end 来自投资组合报告期，不是封面更新日期。找不到写 null。"
+        schema["document_info"] = {
+            key: {"value": "原文值或 null", "page": 1, "quote": "逐字原文"}
+            for key in ("fund_name", "fund_code", "disclosure_date", "period_end")
+        }
+        task += (
+            "附带 document_info：基金名、基金代码、披露日期、报告期末；日期用 YYYY-MM-DD。"
+            "报告期末依据正文明确报告期间，不能把封面更新日期或送出日期当作报告期末；找不到写 null。"
+        )
         source_text += "\n【文档元数据原文，仅用于确认报告期间，不作为本章节的披露引文】\n" + metadata_text
         system = (
             "你是基金披露文件章节信息识别器。只处理指定章节，先读完整章节再按规则分类。"
@@ -1480,13 +1787,11 @@ async def _extract_chapters(
             "只返回一个 JSON 对象，不输出 Markdown。" + task
         )
         prompt = f"文档角色：{role}；文件：{filename}。\n模块：{rule_id}。\n【模块规则】\n{rule_texts[rule_id]}\n【JSON 结构】\n{json.dumps(schema, ensure_ascii=False)}\n{source_text}"
-        if len(system) + len(prompt) > MAX_ANALYSIS_CHARS:
-            raise ValueError(f"PDF_ANALYSIS_LIMIT_EXCEEDED: {rule_id}; no content was truncated")
         batch_prompts: list[str] = []
         source_batches = []
         if source_mode and len(system) + len(prompt) > SOURCE_BATCH_CHARS:
             source_batches = source_catalogue_batches(context, records, tables, SOURCE_BATCH_CHARS)
-            if len(source_batches) > 1:
+            if source_batches:
                 for batch_index, batch in enumerate(source_batches, start=1):
                     batch_source = (
                         "【章节标题上下文】\n" + "\n".join(batch["section_headings"])
@@ -1504,8 +1809,10 @@ async def _extract_chapters(
                         f"{rule_texts[rule_id]}\n【JSON 结构】\n{json.dumps(schema, ensure_ascii=False)}\n"
                         f"{batch_task}\n{batch_source}\n【文档元数据原文，仅用于确认报告期间】\n{metadata_text}"
                     )
-                if any(len(system) + len(item) > MAX_ANALYSIS_CHARS for item in batch_prompts):
-                    raise ValueError(f"PDF_ANALYSIS_LIMIT_EXCEEDED: {rule_id}; a source batch exceeds the configured limit")
+        if batch_prompts and any(len(system) + len(item) > MAX_ANALYSIS_CHARS for item in batch_prompts):
+            raise ValueError(f"PDF_ANALYSIS_LIMIT_EXCEEDED: {rule_id}; a source batch exceeds the configured limit")
+        if not batch_prompts and len(system) + len(prompt) > MAX_ANALYSIS_CHARS:
+            raise ValueError(f"PDF_ANALYSIS_LIMIT_EXCEEDED: {rule_id}; no content was truncated")
         safe_id = rule_id.replace(".", "_")
         prefix = f"{role}/chapters/{safe_id}"
         _trace_artifact(trace_callback, f"{prefix}/sources.json", {"rows": records, "unmapped_markdown_rows": gaps}, role=role)
@@ -1561,7 +1868,7 @@ async def _extract_chapters(
                 last_info = next((item[1] for item in batch_results if item[1]), last_info)
                 module = merge_source_batch_modules(parsed_modules, records) if source_batches else parsed_modules[0]
                 if source_mode:
-                    module = bind_sources(module, records, rule)
+                    module = bind_sources(module, records, active_rule)
                     last_module = module
                     if module["source_warnings"]:
                         raise ValueError("AI_SOURCE_COVERAGE: " + " ".join(module["source_warnings"]))
@@ -1572,7 +1879,7 @@ async def _extract_chapters(
                     if context and not module["found"]:
                         module["found"] = True
                         module["source_warnings"] = [*module.get("source_warnings", []), "章节原文已定位，但模型未能提取内容。"]
-                checked = _verify_module(document, pages, module, rule, rule_texts[rule_id],
+                checked = _verify_module(document, pages, module, active_rule, rule_texts[rule_id],
                                          {p["physical_page"] for p in context.get("physical_pages", [])},
                                          context.get("section_markdown", ""), tables, header_maps)
                 if source_mode and checked["status"] != "EXTRACTED":
@@ -1580,7 +1887,7 @@ async def _extract_chapters(
                 if not source_mode and module.get("disclosures") and checked.get("completeness_warnings"):
                     raise ValueError("AI_EVIDENCE: " + " ".join(checked["completeness_warnings"]))
                 info, _ = _verify_metadata(document, pages, last_info)
-                if key and not hit and checked["status"] == "EXTRACTED" and (rule is not MODULE_RULES[0] or info.get("period_end")):
+                if key and not hit and checked["status"] == "EXTRACTED":
                     try:
                         cache_response = json.dumps({"module": module, "document_info": last_info}, ensure_ascii=False) if source_batches else responses[0]
                         cache.save(key, cache_response)
@@ -1604,7 +1911,7 @@ async def _extract_chapters(
                     prompt += "\n上次输出未通过校验，请完整重新返回本章节：" + str(exc)
         raise AssertionError("unreachable")
 
-    tasks = [asyncio.create_task(extract(rule)) for rule in MODULE_RULES]
+    tasks = [asyncio.create_task(extract(rule)) for rule in _rule_definitions(execution_plans)]
     try:
         outcomes = await asyncio.gather(*tasks)
     except BaseException:
@@ -1613,7 +1920,8 @@ async def _extract_chapters(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
-    return {"document_info": outcomes[0][1], "modules": [outcome[0] for outcome in outcomes]}
+    document_info = next((info for _, info in outcomes if info), {})
+    return {"document_info": document_info, "modules": [outcome[0] for outcome in outcomes]}
 
 
 async def analyze_document(
@@ -1639,6 +1947,7 @@ async def analyze_document(
         if active_rules.get("scope") != "investment" or not isinstance(active_rules.get("rule_texts"), dict):
             raise ValueError("INVESTMENT_RULE_SNAPSHOT_INVALID")
         rule_texts = active_rules["rule_texts"]
+        execution_plans = active_rules.get("execution_plans", {})
         common_rules = str(active_rules.get("common_rules", ""))
         if trace_callback:
             _trace_artifact(trace_callback, "rules/rule_snapshot.json", {
@@ -1672,14 +1981,14 @@ async def analyze_document(
             "duration_ms": round((time.monotonic() - conversion_started) * 1000),
         })
         chapter_started = time.monotonic()
-        markdown_sections = _anydoc_sections(markdown, rule_texts)
-        chapter_contexts = _chapter_contexts(markdown_sections, pages, rule_texts)
+        markdown_sections = _anydoc_sections(markdown, rule_texts, execution_plans)
+        chapter_contexts = _chapter_contexts(markdown_sections, pages, rule_texts, execution_plans)
         _trace_artifact(trace_callback, f"{role}/chapter_contexts.json", chapter_contexts, role=role)
         _trace_event(trace_callback, "chapter_aggregation_completed", role=role, details={
             "sections": {key: len(value.get("section_markdown", "")) for key, value in chapter_contexts.items()},
             "duration_ms": round((time.monotonic() - chapter_started) * 1000),
         })
-        candidate_numbers = _candidate_pages(pages, rule_texts)
+        candidate_numbers = _candidate_pages(pages, rule_texts, execution_plans)
         for context in chapter_contexts.values():
             candidate_numbers.update(page["physical_page"] for page in context.get("physical_pages", []))
         for section in markdown_sections.values():
@@ -1687,10 +1996,20 @@ async def analyze_document(
         tables_started = time.monotonic()
         native_tables = page_tables(converted)
         table_cache = {p: native_tables.get(p, []) for p in candidate_numbers}
-        aliases_by_rule = {rule["rule_id"]: _header_aliases(rule_texts[rule["rule_id"]]) for rule in MODULE_RULES}
+        aliases_by_rule = {
+            rule["rule_id"]: _header_aliases(execution_plans.get(rule["rule_id"]))
+            for rule in _rule_definitions(execution_plans)
+        }
+        fields_by_rule = {
+            rule["rule_id"]: set(_rule_for_execution_plan(
+                rule, execution_plans.get(rule["rule_id"]),
+            )["fields"])
+            for rule in _rule_definitions(execution_plans)
+        }
         header_maps = _header_column_maps(
             table_cache,
             aliases_by_rule,
+            required_fields_by_rule=fields_by_rule,
             column_tolerance=_cross_page_column_tolerance(common_rules),
         )
         table_snapshot = {
@@ -1702,6 +2021,8 @@ async def analyze_document(
                         [list(map(float, cell)) if cell is not None else None for cell in row]
                         for row in table["cells_by_row"]
                     ],
+                    "unit_context": table.get("unit_context", ""),
+                    "column_units": table.get("column_units", {}),
                 }
                 for table in tables
             ]
@@ -1720,14 +2041,15 @@ async def analyze_document(
         raw_result = await _extract_chapters(
             filename, role, provider, chapter_contexts, pages, rule_texts,
             table_cache, header_maps, candidate_numbers, trace_callback, force_refresh,
-            hashlib.sha256(content).hexdigest(), document,
+            hashlib.sha256(content).hexdigest(), document, execution_plans,
         )
         _trace_artifact(trace_callback, f"{role}/model_candidate.json", raw_result, role=role)
         by_id = {item["rule_id"]: item for item in raw_result["modules"]}
         verification_started = time.monotonic()
         document_info, metadata_evidence = _verify_metadata(document, pages, raw_result.get("document_info"))
         modules = []
-        for rule in MODULE_RULES:
+        for rule in _rule_definitions(execution_plans):
+            active_rule = _rule_for_execution_plan(rule, execution_plans.get(rule["rule_id"]))
             module_context = chapter_contexts.get(rule["rule_id"], {})
             source_pages = {
                 int(source_page["physical_page"])
@@ -1735,7 +2057,7 @@ async def analyze_document(
                 if source_page.get("physical_page") is not None
             }
             modules.append(_verify_module(
-                document, pages, by_id.get(rule["rule_id"]), rule,
+                document, pages, by_id.get(rule["rule_id"]), active_rule,
                 rule_texts[rule["rule_id"]], source_pages,
                 module_context.get("section_markdown", ""), table_cache, header_maps,
             ))

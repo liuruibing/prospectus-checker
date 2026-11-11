@@ -10,16 +10,31 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from app.rule_compiler import effective_rule_text
 
 from app.domain import normalize_numeric, normalize_text
 from app.source_evidence import evidence_source
 
 
-def column_unit(field: str, header: str) -> str:
-    if "ratio" in field:
-        return "%" if any(token in header for token in ("%", "％", "比例")) else ""
-    return next((unit for unit in ("亿元", "万元", "元", "万股", "股") if unit in header), "")
+def column_unit(field: str, header: str, context: str = "") -> str:
+    if any(token in header for token in ("%", "％", "比例")):
+        return "%"
+    unit = next((unit for unit in ("亿元", "万元", "元", "万股", "股") if unit in header), "")
+    if unit:
+        return unit
+    # Some reports print the amount unit beside the table instead of repeating
+    # it in every column header (for example, “金额单位：人民币元”). Use that
+    # declaration only for a column whose own header describes a monetary value.
+    monetary_header = any(token in header for token in ("金额", "价值", "费用", "市值", "资产", "净值"))
+    if monetary_header:
+        return next((unit for unit in ("亿元", "万元", "元") if unit in context), "")
+    return ""
+
+
+def _source_value_supported(value: Any, operation: str) -> bool:
+    text = str(value or "").strip()
+    if operation == "decimal":
+        return normalize_numeric(text)["kind"] in {"NUMBER", "DASH"}
+    return bool(normalize_text(text))
 
 
 def resolve_data_columns(table: dict, header_mapping: dict[str, int], row_index: int, rule_id: str | None = None) -> dict[str, int]:
@@ -158,8 +173,9 @@ def source_catalogue(context: dict, rule: dict, tables: dict, header_maps: dict,
                     or normalize_text("".join(str(cell) for cell in row if cell is not None)) in plain_section
                 )
                 and set(rule["fields"]).issubset(row_mapping)
-                and all(normalize_numeric(row[row_mapping[key]])["kind"] in {"NUMBER", "DASH"}
-                        for key in rule["fields"])
+                and all(_source_value_supported(
+                    row[row_mapping[key]], rule.get("field_operations", {}).get(key, "decimal"),
+                ) for key in rule["fields"])
                 for row_index, row in enumerate(table["matrix"])
                 for row_mapping in [resolve_data_columns(table, mapping, row_index, rule["rule_id"])]
             ):
@@ -172,7 +188,8 @@ def source_catalogue(context: dict, rule: dict, tables: dict, header_maps: dict,
                     if column is None:
                         break
                     raw = str(cells[column] if cells[column] is not None else "").strip() if column < len(cells) else ""
-                    if normalize_numeric(raw)["kind"] not in {"NUMBER", "DASH"}:
+                    operation = rule.get("field_operations", {}).get(field, "decimal")
+                    if not _source_value_supported(raw, operation):
                         break
                     header = " ".join(str(row[column] or "") for row in table["matrix"][:3] if column < len(row))
                     unit = table.get("column_units", {}).get(rule["rule_id"], {}).get(field, column_unit(field, header))
@@ -212,6 +229,59 @@ def render_catalogue(records: dict[str, dict]) -> str:
     ], ensure_ascii=False, separators=(",", ":"))
 
 
+def _markdown_table_heading_contexts(markdown: str) -> list[tuple[list[str], set[tuple[str, ...]]]]:
+    """Return each Markdown table with the heading path active at that table."""
+    lines = markdown.splitlines()
+    heading_stack: list[tuple[int, str]] = []
+    tables: list[tuple[list[str], set[tuple[str, ...]]]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        heading = re.match(r"^(#{1,6})\s+\S", line.strip())
+        if heading:
+            level = len(heading.group(1))
+            while heading_stack and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            heading_stack.append((level, line.strip()))
+        if "<table" in line.lower():
+            block = [line]
+            while "</table>" not in block[-1].lower() and index + 1 < len(lines):
+                index += 1
+                block.append(lines[index])
+            rows = markdown_rows("\n".join(block))
+            signatures = {
+                tuple(normalize_text(cell) for cell in row if normalize_text(cell))
+                for row in rows
+            }
+            tables.append(([entry[1] for entry in heading_stack], signatures))
+        index += 1
+    return tables
+
+
+def _table_headings_for_rows(
+    entries: list[tuple[str, dict]],
+    markdown_tables: list[tuple[list[str], set[tuple[str, ...]]]],
+    fallback: list[str],
+) -> list[str]:
+    row_signatures = {
+        tuple(normalize_text(cell) for cell in record.get("cells", []) if normalize_text(cell))
+        for _, record in entries
+    }
+    if not row_signatures:
+        return fallback
+    scored = [
+        (len(row_signatures & signatures), headings)
+        for headings, signatures in markdown_tables
+    ]
+    best_score = max((score for score, _ in scored), default=0)
+    best = [headings for score, headings in scored if score == best_score and score > 0]
+    # If parser rows occur in multiple logical tables, keep the broader context
+    # and let the model/report remain unresolved instead of guessing a scope.
+    if len(best) != 1:
+        return fallback
+    return best[0] or fallback
+
+
 def source_catalogue_batches(
     context: dict, records: dict[str, dict], tables: dict, max_chars: int,
 ) -> list[dict[str, Any]]:
@@ -226,7 +296,7 @@ def source_catalogue_batches(
         return []
     headings = [line.strip() for line in context.get("section_markdown", "").splitlines()
                 if re.match(r"^#{1,6}\s+\S", line)]
-    common = {"section_headings": headings}
+    markdown_tables = _markdown_table_heading_contexts(context.get("section_markdown", ""))
     grouped: dict[tuple[int, int], list[tuple[str, dict]]] = {}
     for source_id, record in records.items():
         source_ref = record.get("source_ref") or {}
@@ -240,6 +310,8 @@ def source_catalogue_batches(
         table = page_tables[table_index] if table_index < len(page_tables) else {}
         header_rows = table.get("matrix", [])[:3]
         header = {"page": page, "table": table_index, "headers": header_rows}
+        table_headings = _table_headings_for_rows(entries, markdown_tables, headings)
+        common = {"section_headings": table_headings}
         current: list[dict] = []
         current_size = len(json.dumps({**common, "table": header, "rows": []}, ensure_ascii=False))
         for source_id, record in entries:
@@ -305,8 +377,10 @@ def merge_source_batch_modules(modules: list[dict], records: dict[str, dict]) ->
 
 
 def source_gaps(context: dict, records: dict[str, dict], rule: dict) -> list[str]:
+    """Find table-shaped text outside parser rows without relying on business labels."""
     missing = []
-    for cells in markdown_rows(context.get("section_markdown", "")):
+    markdown = context.get("section_markdown", "")
+    for cells in markdown_rows(markdown):
         tokens = [normalize_text(cell) for cell in cells if normalize_text(cell)]
         if sum(normalize_numeric(token)["kind"] in {"NUMBER", "DASH"} for token in tokens) < len(rule["fields"]):
             continue
@@ -315,50 +389,49 @@ def source_gaps(context: dict, records: dict[str, dict], rule: dict) -> list[str
         if not any(tokens == [normalize_text(cell) for cell in source["cells"] if normalize_text(cell)] for source in records.values()):
             missing.append(" | ".join(cells))
 
-    # AnyDoc may render a continued table's final row as plain text after the
-    # printed page footer. Check configured row names in the full chapter text
-    # so a detached total or continuation row cannot disappear just because it
-    # is outside a Markdown pipe table / PyMuPDF table grid.
-    rule_path = rule.get("file")
-    rule_text = effective_rule_text(rule_path) if isinstance(rule_path, Path) else ""
-    aliases = []
-    in_row_policy = False
-    for line in rule_text.splitlines():
-        if line.startswith("## "):
-            in_row_policy = line[3:].strip() == "row_policy"
+    # Some PDF-to-Markdown converters detach a final row from its table and
+    # emit it as ordinary text (often after a printed page footer). Inspect
+    # such lines by their declared numeric field count, not by row names from
+    # a particular chapter. This is a conservative completeness warning only;
+    # it never creates a business mismatch.
+    decimal = r"[-—–－−]|[+-]?\d[\d,，]*(?:\.\d+)?%?"
+    source_value_sequences = set()
+    for source in records.values():
+        fields = source.get("fields", {})
+        sequence = []
+        for field in rule["fields"]:
+            value = fields.get(field, {}) if isinstance(fields, dict) else {}
+            raw = value.get("raw_text") if isinstance(value, dict) else value
+            normalized = normalize_numeric(raw)
+            if normalized["kind"] not in {"NUMBER", "DASH"}:
+                sequence = []
+                break
+            sequence.append((normalized["kind"], normalized["value"]))
+        if sequence:
+            source_value_sequences.add(tuple(sequence))
+    # Page/image references are serialization metadata, not table rows. Their
+    # filenames commonly contain page numbers and hyphens, which the generic
+    # numeric-row detector can otherwise mistake for financial values. Keep
+    # the original Markdown for table parsing above, but remove image syntax
+    # from this plain-text completeness scan.
+    text_markdown = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", markdown)
+    for line in text_markdown.splitlines():
+        stripped = re.sub(r"第\s*\d+\s*页(?:\s*共\s*\d+\s*页)?", "", line).strip()
+        if (not stripped or "|" in stripped or "<tr" in stripped.lower()
+                or re.match(r"^#{1,6}\s", stripped) or stripped.startswith("<!--")):
             continue
-        if not in_row_policy or not line.startswith("|"):
+        raw_values = re.findall(decimal, stripped)
+        values = [normalize_numeric(value) for value in raw_values]
+        values = [value for value in values if value["kind"] in {"NUMBER", "DASH"}]
+        if len(values) < len(rule["fields"]):
             continue
-        cells = [cell.strip().strip("` ") for cell in line.strip().strip("|").split("|")]
-        if len(cells) < 2 or cells[0] == "row_key" or set(cells[0]) <= {"-", ":"}:
+        residue = re.sub(decimal, "", stripped)
+        if len(normalize_text(re.sub(r"[：:，,。；;（）()\[\]【】\-—_\s]", "", residue))) > 48:
             continue
-        aliases.extend(value.strip(" `。；;，,") for value in re.split(r"[、/；;]", cells[1]) if value.strip(" `。；;，,"))
-    known_source_labels = {
-        normalize_text(cell)
-        for source in records.values()
-        for cell in source.get("cells", [])
-        if normalize_text(cell)
-    }
-    for line in context.get("section_markdown", "").splitlines():
-        if "|" in line or "<tr>" in line:
-            continue
-        line_without_footer = re.sub(r"第\s*\d+\s*页(?:\s*共\s*\d+\s*页)?", "", line)
-        plain = normalize_text(line_without_footer)
-        if not plain:
-            continue
-        matching_aliases = [alias for alias in aliases if len(normalize_text(alias)) >= 2
-                            and normalize_text(alias) in plain]
-        leading_aggregate = re.match(r"^\s*(合计|总计|小计)(?=$|[\s:：\d,，.-])", line_without_footer)
-        if leading_aggregate:
-            matching_aliases.append(leading_aggregate.group(1))
-        numeric_count = sum(
-            normalize_numeric(token)["kind"] in {"NUMBER", "DASH"}
-            for token in re.findall(r"(?<![\w])(?:[-—–－]|\d[\d,，]*(?:\.\d+)?%?)(?![\w])", line_without_footer)
-        )
-        if numeric_count < len(rule.get("fields", [])):
-            continue
-        if matching_aliases and not any(normalize_text(alias) in known_source_labels for alias in matching_aliases):
-            missing.append(line.strip())
+        sequence = tuple((value["kind"], value["value"]) for value in values)
+        if sequence not in source_value_sequences and stripped not in missing:
+            missing.append(stripped)
+
     return missing
 
 
@@ -384,12 +457,17 @@ def bind_sources(module: dict, records: dict[str, dict], rule: dict) -> dict:
         row["source_ref"] = source.get("source_ref")
         row["row_quote"] = " ".join(source["cells"])
         row["fields"] = source["fields"]
-        for key in ("industry_code", "industry_name", "stock_code", "stock_name", "rank"):
-            column = source["mapping"].get(key)
-            if column is not None:
+        row_matching = rule.get("row_matching", {})
+        declared_identity_fields = set(row_matching.get("identity_fields", []))
+        declared_identity_fields.update(row_matching.get("fallback_identity_fields", []))
+        declared_identity_fields.update(row_matching.get("scope_fields", []))
+        declared_identity_fields.update(row_matching.get("hierarchy_fields", []))
+        declared_identity_fields.update(row_matching.get("identity_headers", {}).keys())
+        for key, column in source["mapping"].items():
+            if key not in declared_identity_fields:
+                continue
+            if isinstance(column, int) and 0 <= column < len(source["cells"]):
                 row[key] = source["cells"][column] or None
-        if row.get("industry_name") or row.get("stock_name"):
-            row["row_label"] = row.get("industry_name") or row["stock_name"]
         rows.append(row)
     missing = sorted(set(records) - used)
     if missing:

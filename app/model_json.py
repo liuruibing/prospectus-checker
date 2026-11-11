@@ -9,6 +9,17 @@ def read_model_json(text: str) -> tuple[dict, bool]:
     try:
         result = json.loads(clean[start:end + 1])
     except json.JSONDecodeError as error:
+        # Some model gateways append surplus closing braces after a complete
+        # root object. Recover only that unambiguous case: never ignore a
+        # second JSON value or unfinished business fields.
+        if start >= 0:
+            try:
+                result, cursor = json.JSONDecoder().raw_decode(clean[start:])
+                tail = clean[start + cursor:]
+                if isinstance(result, dict) and tail.strip() and not tail.strip(" \t\r\n}"):
+                    return result, True
+            except json.JSONDecodeError:
+                pass
         match = re.match(r'\{\s*"items"\s*:\s*\[', clean[start:]) if start >= 0 else None
         if not match:
             raise error

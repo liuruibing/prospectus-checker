@@ -108,14 +108,43 @@ def page_tables(package: dict) -> dict:
         for table in page["tables"]:
             count = len(table["xs"])-1
             matrix, boxes = [], []
+            table_boxes = []
             for row in table["rows"]:
                 values, cells = [None]*count, [None]*count
                 for c in row:
                     values[c["col"]] = "".join(segments[s]["text"] for s in c["segments"])
                     cells[c["col"]] = c["bbox"]
+                    if c.get("bbox"):
+                        table_boxes.append(c["bbox"])
                 matrix.append(values)
                 boxes.append(cells)
+            unit_context = _nearby_table_context(page["page"], table_boxes, segments)
             records.append({"matrix": matrix, "cells_by_row": boxes, "columns": count,
-                            "page_width": dimensions[page["page"]]["width"]})
+                            "page_width": dimensions[page["page"]]["width"],
+                            "unit_context": unit_context})
         result[page["page"]] = records
     return result
+
+
+def _nearby_table_context(page_number: int, cell_boxes: list[list[float]], segments: dict) -> str:
+    """Collect text immediately above a table using source geometry, not PDF text-block bounds."""
+    boxes = [box for box in cell_boxes if isinstance(box, (list, tuple)) and len(box) == 4]
+    if not boxes:
+        return ""
+    table_left = min(float(box[0]) for box in boxes)
+    table_top = min(float(box[1]) for box in boxes)
+    table_right = max(float(box[2]) for box in boxes)
+    nearby = []
+    for segment in segments.values():
+        if not isinstance(segment, dict) or segment.get("page") != page_number:
+            continue
+        bbox = segment.get("bbox")
+        text = str(segment.get("text") or "").strip()
+        if not text or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        left, top, right, bottom = (float(value) for value in bbox)
+        vertical_gap = table_top - bottom
+        horizontal_overlap = min(table_right, right) - max(table_left, left)
+        if 0 <= vertical_gap <= 48 and horizontal_overlap > 0:
+            nearby.append((vertical_gap, top, text))
+    return " ".join(text for _, _, text in sorted(nearby))

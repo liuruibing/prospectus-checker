@@ -24,11 +24,10 @@ from app.runtime import InvestmentComparisonWorkflow, ProductSummaryVerification
 from app.summary_check import RULE_VERSION as SUMMARY_RULE_VERSION
 from app.summary_check import capture_product_summary_rule_snapshot
 from app.extraction import capture_investment_rule_snapshot
-from app.domain import MODULE_RULES
 from app.rule_store import RuleConflictError, get_rule, list_rules, save_rule
 from app.rule_compiler import (
-    RuleCompilationError, _is_plain_chinese_rule, _validate_execution_markdown,
-    compile_rule, load_compiled_rule, persist_compiled_rule,
+    RuleCompilationError, _is_plain_chinese_rule,
+    compile_rule, load_investment_rule_definitions, persist_compiled_rule,
 )
 from app.versioning import runtime_source_fingerprint
 
@@ -125,22 +124,29 @@ async def update_rule_file(scope: str, filename: str, payload: RuleUpdatePayload
         current = get_rule(scope, filename)
         if current["sha256"] != payload.expected_sha256:
             raise RuleConflictError("文件已被其他操作更新，请重新载入后再保存")
-        if scope == "investment" and filename.startswith("common_"):
+        if filename.startswith("common_"):
             public_override = {filename: payload.content}
             pending_plans = []
-            for module in MODULE_RULES:
-                module_path = Path(module["file"])
+            scope_dir = ROOT / "rules" / scope
+            module_paths = sorted(path for path in scope_dir.glob("*.md")
+                                  if not path.name.startswith("common_"))
+            public_rules = []
+            for common_path in sorted(scope_dir.glob("common_*.md")):
+                public_rules.append(
+                    payload.content if common_path.name == filename
+                    else common_path.read_text(encoding="utf-8")
+                )
+            combined_common_rules = "\n\n".join(public_rules)
+            for module_path in module_paths:
                 module_source = module_path.read_text(encoding="utf-8")
-                existing_execution = load_compiled_rule(module_path, module_source) or module_source
                 plan = await compile_rule(
                     scope=scope, filename=module_path.name, source_content=module_source,
-                    existing_execution=existing_execution, provider=provider,
-                    common_rules=payload.content, public_rule_overrides=public_override,
+                    provider=provider,
+                    common_rules=combined_common_rules, public_rule_overrides=public_override,
                 )
-                _validate_execution_markdown(scope, module_path.name, plan["execution_markdown"])
                 pending_plans.append((module_path.name, plan))
             versions = {plan["public_rules_sha256"] for _, plan in pending_plans}
-            if len(pending_plans) != len(MODULE_RULES) or len(versions) != 1:
+            if len(pending_plans) != len(module_paths) or len(versions) != 1:
                 raise RuleCompilationError("公共规则依赖项未能整体生成同一版本，未激活任何修改。")
             # Compiled artifacts are staged under the pending public-rule hash.
             # Saving the common text last switches the complete set atomically.
@@ -155,16 +161,14 @@ async def update_rule_file(scope: str, filename: str, payload: RuleUpdatePayload
             }
             return saved
         if _is_plain_chinese_rule(payload.content):
-            path = ROOT / "rules" / scope / filename
-            existing_execution = load_compiled_rule(path, current["content"]) if _is_plain_chinese_rule(current["content"]) else current["content"]
-            existing_execution = existing_execution or current["content"]
-            common_path = ROOT / "rules" / scope / "common_公共规则.md"
-            common_rules = common_path.read_text(encoding="utf-8") if common_path.is_file() else ""
+            common_rules = "\n\n".join(
+                path.read_text(encoding="utf-8")
+                for path in sorted((ROOT / "rules" / scope).glob("common_*.md"))
+            )
             plan = await compile_rule(
                 scope=scope, filename=filename, source_content=payload.content,
-                existing_execution=existing_execution, provider=provider, common_rules=common_rules,
+                provider=provider, common_rules=common_rules,
             )
-            _validate_execution_markdown(scope, filename, plan["execution_markdown"])
             persist_compiled_rule(scope, filename, plan)
             saved = save_rule(scope, filename, payload.content, payload.expected_sha256)
             saved["execution_version"] = {

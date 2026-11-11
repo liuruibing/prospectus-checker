@@ -47,6 +47,29 @@ def test_logical_units_bind_existing_evidence_and_keep_table_whole(tmp_path):
     assert page_tables(package)[1][0]["columns"] == 3
 
 
+def test_page_tables_keeps_unit_caption_from_text_above_native_table(tmp_path):
+    package = {"source_map": {
+        "pages": [{"page": 1, "width": 500, "height": 700}],
+        "original_segments": {
+            "caption": {"page": 1, "text": "金额单位：人民币元", "bbox": [100, 25, 180, 38]},
+            "cell": {"page": 1, "text": "项目", "bbox": [60, 66, 100, 75]},
+        },
+        "page_fragments": [
+            {
+                "page": 1,
+                "tables": [
+                    {
+                        "xs": [50, 150],
+                        "rows": [[{"col": 0, "segments": ["cell"], "bbox": [50, 60, 150, 80]}]],
+                    }
+                ],
+            }
+        ],
+    }}
+    table = page_tables(package)[1][0]
+    assert "金额单位：人民币元" in table["unit_context"]
+
+
 def test_conversion_with_unresolved_structure_cannot_enter_model_stage():
     with pytest.raises(ValueError, match="PDF_MD_REQUIRES_REVIEW"):
         require_ready({"status": "REQUIRES_REVIEW", "verification": {"ok": True}, "warnings": []})
@@ -55,19 +78,21 @@ def test_conversion_with_unresolved_structure_cannot_enter_model_stage():
 def test_complete_cross_page_allocation_reaches_existing_extraction_catalogue(tmp_path):
     from app import extraction
     from app.chapter_sources import source_catalogue, source_gaps
-    from app.domain import MODULE_RULES
+    from app.rule_compiler import load_investment_rule_definitions
     path = Path("assets/华泰柏瑞沪深300交易型开放式指数证券投资基金/2025-08-30_2025年中期报告.pdf")
     content = path.read_bytes()
     package = verified_conversion(content, tmp_path)
-    from app.rule_compiler import effective_rule_text
-    texts = {r["rule_id"]: effective_rule_text(r["file"]) for r in MODULE_RULES}
+    from app.rule_compiler import read_rule_source
+    _, _plans, MODULE_RULES = load_investment_rule_definitions()
+    texts = {r["rule_id"]: read_rule_source(r["file"]) for r in MODULE_RULES}
     document, pages = extraction._read_pdf(content, path.name)
     try:
         contexts = extraction._chapter_contexts(extraction._anydoc_sections(package["reader_markdown"], texts), pages, texts)
         tables = page_tables(package)
-        maps = extraction._header_column_maps(tables, {r["rule_id"]: extraction._header_aliases(texts[r["rule_id"]]) for r in MODULE_RULES},
+        maps = extraction._header_column_maps(tables, {r["rule_id"]: extraction._header_aliases(_plans[r["rule_id"]]) for r in MODULE_RULES},
+            required_fields_by_rule={r["rule_id"]: set(r["fields"]) for r in MODULE_RULES},
             column_tolerance=extraction._cross_page_column_tolerance(extraction.COMMON_RULE_FILE.read_text()))
-        rule = MODULE_RULES[0]
+        rule = extraction._rule_for_execution_plan(MODULE_RULES[0], _plans[MODULE_RULES[0]["rule_id"]])
         rows = source_catalogue(contexts[rule["rule_id"]], rule, tables, maps)
         assert len(rows) == 13
         assert source_gaps(contexts[rule["rule_id"]], rows, rule) == []

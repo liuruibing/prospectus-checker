@@ -58,6 +58,59 @@ def make_document_bytes_loader(document_service: Any) -> Callable[[str], dict[st
     return load
 
 
+def _summary_document_metadata(role: str, facts: dict[str, Any]) -> dict[str, Any]:
+    """Project preflight facts into the generic metadata contract used by summary checks."""
+    common = {
+        "fund_name": facts.get("fund_name"),
+        "fund_code": facts.get("fund_code"),
+        "fund_codes": facts.get("fund_codes"),
+    }
+    if role == "product_summary":
+        interval = facts.get("date_interval")
+        exact_date = interval.get("start") if interval and interval.get("start") == interval.get("end") else None
+        return {
+            **common,
+            "compiled_date": exact_date,
+            "compiled_date_interval": interval,
+            "compiled_date_quote": facts.get("date_quote"),
+        }
+    if role == "periodic_report":
+        period = facts.get("date_interval")
+        sent = facts.get("report_send_date_interval")
+        exact_date = lambda interval: interval.get("start") if interval and interval.get("start") == interval.get("end") else None
+        return {
+            **common,
+            "sent_date": exact_date(sent),
+            "sent_date_interval": sent,
+            "sent_date_quote": facts.get("report_send_date_quote"),
+            "period_end": exact_date(period),
+            "period_end_interval": period,
+            "period_end_quote": facts.get("date_quote"),
+            "report_subtype": facts.get("report_subtype"),
+        }
+    if role == "prospectus":
+        version_interval = facts.get("version_date_interval")
+        exact_version_date = (
+            version_interval.get("start")
+            if version_interval and version_interval.get("start") == version_interval.get("end")
+            else None
+        )
+        return {
+            **common,
+            "date_interval": facts.get("date_interval"),
+            "date_label": facts.get("date_label"),
+            "filename_date_interval": facts.get("filename_date_interval"),
+            "filename_date_quote": facts.get("filename_date_quote"),
+            "filename_date_precision": facts.get("filename_date_precision"),
+            "version_date": exact_version_date,
+            "version_date_interval": version_interval,
+            "version_date_quote": facts.get("version_date_quote"),
+            "version_date_source": facts.get("version_date_source"),
+            "version_date_precision": facts.get("version_date_precision"),
+        }
+    raise ValueError(f"Unsupported summary document role: {role}")
+
+
 class WorkflowProtocol(Protocol):
     id: str
 
@@ -137,49 +190,30 @@ class ProductSummaryVerificationWorkflow:
             if not docs["product_summary"].get("content") or not docs["periodic_report"].get("content"):
                 raise ValueError("REQUIRED_DOCUMENT_EMPTY")
             preflight_payload = {"documents": {role: {"filename": doc["filename"], "content": doc["content"]} for role, doc in docs.items()}}
-            writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": "preflight", "step_status": "running", "message": "正在检查基金身份和报告时点"}})
+            writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": "preflight", "step_status": "running", "message": "正在读取文档身份与日期依据"}})
             preflight = await run_pdf(preflight_summary_documents, preflight_payload)
             summary_metadata = preflight.get("product_summary") or {}
             report_metadata = preflight.get("periodic_report") or {}
-            def exact_date(interval: dict[str, str] | None) -> str | None:
-                if not interval or interval.get("start") != interval.get("end"):
-                    return None
-                return interval.get("start")
             docs = {
                 **docs,
                 "product_summary": {
                     **docs["product_summary"],
-                    "metadata": {
-                        "compiled_date": exact_date(summary_metadata.get("date_interval")),
-                        "compiled_date_interval": summary_metadata.get("date_interval"),
-                        "compiled_date_quote": summary_metadata.get("date_quote"),
-                    },
+                    "metadata": _summary_document_metadata("product_summary", summary_metadata),
                 },
                 "periodic_report": {
                     **docs["periodic_report"],
-                    "metadata": {
-                        "sent_date": exact_date(report_metadata.get("report_send_date_interval")),
-                        "sent_date_interval": report_metadata.get("report_send_date_interval"),
-                        "sent_date_quote": report_metadata.get("report_send_date_quote"),
-                        "period_end": exact_date(report_metadata.get("date_interval")),
-                        "period_end_interval": report_metadata.get("date_interval"),
-                        "period_end_quote": report_metadata.get("date_quote"),
-                        "report_subtype": report_metadata.get("report_subtype"),
-                    },
+                    "metadata": _summary_document_metadata("periodic_report", report_metadata),
                 },
             }
             if docs.get("prospectus") and preflight.get("prospectus"):
                 prospectus_metadata = preflight["prospectus"]
                 docs["prospectus"] = {
                     **docs["prospectus"],
-                    "metadata": {
-                        "date_interval": prospectus_metadata.get("date_interval"),
-                        "date_label": prospectus_metadata.get("date_label"),
-                    },
+                    "metadata": _summary_document_metadata("prospectus", prospectus_metadata),
                 }
             if context.trace_callback:
                 context.trace_callback({"kind": "artifact", "path": "preflight/summary_metadata.json", "content": preflight})
-            writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": "preflight", "step_status": "completed", "message": "身份与时点检查完成"}})
+            writer({"event": "workflow.progress", "data": {"runId": context.run_id, "stage": "preflight", "step_status": "completed", "message": "文档依据读取完成"}})
             return {"documents": docs, "preflight": preflight}
 
         async def index_sources(state: ProductSummaryState) -> dict[str, Any]:
@@ -247,8 +281,6 @@ class ProductSummaryVerificationWorkflow:
             result["input_contract_version"] = context.input_val.get("input_contract_version", "product-summary-input-v2")
             result["result_schema_version"] = result.get("schema_version", 3)
             result["preflight"] = state.get("preflight", {})
-            if result["preflight"].get("identity_unconfirmed") or result["preflight"].get("report_not_available_at_compilation"):
-                result["warnings"] = sorted(set(result.get("warnings", []) + [result["preflight"].get("message", "身份或时点需要人工复核。")]))
             trace = context.trace_callback
             if trace:
                 trace({"kind": "artifact", "path": "comparison/comparison_result.json", "content": result})
@@ -358,7 +390,6 @@ class InvestmentComparisonWorkflow:
                         "status": result["status"],
                         "blocked": result["blocked"],
                         "date_gap_days": result["date_gap_days"],
-                        "max_date_gap_days": result["max_date_gap_days"],
                     },
                 })
             get_stream_writer()({
@@ -463,7 +494,12 @@ class InvestmentComparisonWorkflow:
                 "event": "workflow.progress",
                 "data": {"runId": getattr(context, "run_id", None), "stage": "comparison", "step_status": "running", "message": "正在比对核对结果"},
             })
-            result = compare_documents(state["prospectus"], state["periodic_report"])
+            payload = state["payload"]
+            snapshot = payload.get("rule_snapshot") or {}
+            result = compare_documents(
+                state["prospectus"], state["periodic_report"],
+                execution_plans=snapshot.get("execution_plans"),
+            )
             trace_callback = getattr(context, "trace_callback", None)
             if trace_callback:
                 trace_callback({
@@ -471,7 +507,6 @@ class InvestmentComparisonWorkflow:
                     "path": "comparison/comparison_result.json",
                     "content": result,
                 })
-            payload = state["payload"]
             result["documents"]["prospectus"]["preview_id"] = payload.get("prospectus_preview_id")
             result["documents"]["periodic_report"]["preview_id"] = payload.get("periodic_preview_id")
             result["preflight"] = state["preflight"]
