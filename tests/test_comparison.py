@@ -32,6 +32,18 @@ def test_declared_comparison_operations_are_shared_and_rule_data_driven():
         {"operation": "identifier"}, {"raw_text": "代码 510300 / 510500"}, {"raw_text": "510300"},
     ) == "UNRESOLVED"
     assert compare_declared_field(
+        {"operation": "identifier"},
+        {"raw_text": "基金代码：000001；交易代码：000001（前端）、000002（后端）；下属基金代码：000001"},
+        {"raw_text": "基金主代码：000001；交易代码：000001（前端）、000002（后端）"},
+        semantic_status="MATCH",
+    ) == "MATCH"
+    assert compare_declared_field(
+        {"operation": "identifier"},
+        {"raw_text": "基金代码：000001；交易代码：000002（后端）"},
+        {"raw_text": "基金主代码：000001；交易代码：000003（后端）"},
+        semantic_status="MATCH",
+    ) == "UNRESOLVED"
+    assert compare_declared_field(
         {"operation": "semantic"}, {"raw_text": "文本甲"}, {"raw_text": "文本乙"},
         semantic_status="MATCH",
     ) == "MATCH"
@@ -1165,3 +1177,66 @@ def test_one_sided_placeholder_row_is_not_silently_equated_with_absence():
     assert result["status"] == "MISMATCH"
     assert result["difference_count"] == 1
     assert result["modules"][1]["differences"][0]["status"] == "MISSING_ROW"
+
+
+def test_within_days_and_warn_allow_comparison_within_half_year():
+    import copy
+    _, plans, _ = load_investment_rule_definitions()
+    plan = copy.deepcopy(plans["investment.asset_allocation"])
+    plan["comparison"]["context_checks"] = [
+        {
+            "label": "定期报告披露日期不晚于招募说明书披露日期",
+            "target_path": "document.document_info.disclosure_date",
+            "reference_path": "document.document_info.disclosure_date",
+            "operation": "reference_before_or_equal",
+            "required": True,
+        },
+        {
+            "label": "双方报告期末相距不超过183天",
+            "target_path": "document.document_info.period_end",
+            "reference_path": "document.document_info.period_end",
+            "operation": "within_days",
+            "max_days": 183,
+            "required": True,
+        },
+        {
+            "label": "双方报告期末不一致提示",
+            "target_path": "document.document_info.period_end",
+            "reference_path": "document.document_info.period_end",
+            "operation": "date",
+            "required": False,
+            "on_mismatch": "warn",
+        },
+    ]
+    left = document(disclosure="2025-11-24", period="2025-06-30", asset_rows=[asset_row("100")])
+    right = document(disclosure="2025-10-28", period="2025-09-30", asset_rows=[asset_row("200")])
+
+    result = compare_documents(left, right, {"investment.asset_allocation": plan})
+
+    assert result["status"] == "MISMATCH"
+    assert result["difference_count"] == 1
+    assert any("2025-06-30" in w and "2025-09-30" in w for w in result["warnings"])
+
+    far_right = document(disclosure="2025-10-28", period="2026-03-31", asset_rows=[asset_row("200")])
+    blocked = compare_documents(left, far_right, {"investment.asset_allocation": plan})
+    assert blocked["status"] == "UNRESOLVED"
+    assert blocked["modules"][0]["status"] == "UNRESOLVED_STRUCTURE"
+
+
+def test_hydrate_investment_document_dates_fills_prospectus_cover_month_and_version_date():
+    from app.runtime import _hydrate_investment_document_dates
+
+    left, right = _hydrate_investment_document_dates(
+        {"document_info": {"fund_name": "样本基金", "disclosure_date": None, "period_end": "2025-06-30"}},
+        {"document_info": {"fund_name": "样本基金", "disclosure_date": "2025-10-28", "period_end": "2025-09-30"}},
+        {
+            "prospectus": {
+                "version_date_interval": None,
+                "date_interval": {"start": "2025-11-01", "end": "2025-11-30"},
+                "date_quote": "二〇二五年十一月",
+            },
+            "periodic_report": {},
+        },
+    )
+    assert left["document_info"]["disclosure_date"] == "2025-11-01"
+    assert right["document_info"]["disclosure_date"] == "2025-10-28"

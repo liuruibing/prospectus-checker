@@ -132,3 +132,47 @@ def test_task_query_covers_all_history_and_supports_filters_and_pagination(tmp_p
     assert client.get("/api/tasks", params={"page": 0}).status_code == 422
     assert client.get("/api/tasks", params={"start_date": "2026-11-07", "end_date": "2026-11-06"}).status_code == 422
     assert client.get("/api/jobs/task_history_0000").json()["status"] == "failed"
+
+
+def test_rerun_creates_new_job_id_from_stored_input_pdfs(tmp_path, monkeypatch):
+    store = TaskAuditStore(tmp_path / "tasks")
+    monkeypatch.setattr(main, "AUDIT_STORE", store)
+    monkeypatch.setattr(main, "JOBS", {})
+    monkeypatch.setattr(main, "JOB_TASKS", {})
+    pdf_a = fitz.open()
+    pdf_a.new_page()
+    bytes_a = pdf_a.tobytes()
+    pdf_a.close()
+    original_job = {
+        "job_id": "orig_task_1234",
+        "workflow_id": "prospectus-periodic-comparison",
+        "status": "completed",
+        "document_names": {"prospectus": "样本招书.pdf", "periodic_report": "样本季报.pdf"},
+        "created_at": "2026-11-11T00:00:00+00:00",
+        "result": {"status": "UNRESOLVED", "difference_count": 0},
+    }
+    store.create_task(
+        "orig_task_1234",
+        original_job,
+        {"prospectus": ("样本招书.pdf", bytes_a), "periodic_report": ("样本季报.pdf", bytes_a)},
+        {},
+    )
+    captured = {}
+
+    async def fake_create_comparison_job(prospectus, periodic_report, force_refresh=False):
+        captured["prospectus_name"] = prospectus.filename
+        captured["periodic_name"] = periodic_report.filename
+        captured["prospectus_bytes"] = await prospectus.read()
+        captured["force_refresh"] = force_refresh
+        return {"job_id": "new_task_5678", "status": "queued", "workflow_id": "prospectus-periodic-comparison"}
+
+    monkeypatch.setattr(main, "create_comparison_job", fake_create_comparison_job)
+    client = TestClient(main.app)
+    resp = client.post("/api/jobs/orig_task_1234/rerun")
+    assert resp.status_code == 202
+    assert resp.json()["job_id"] == "new_task_5678"
+    assert captured["prospectus_name"] == "样本招书.pdf"
+    assert captured["periodic_name"] == "样本季报.pdf"
+    assert captured["prospectus_bytes"] == bytes_a
+    assert captured["force_refresh"] is True
+    assert client.post("/api/jobs/missing_task_999/rerun").status_code == 404

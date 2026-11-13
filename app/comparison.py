@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -223,8 +224,19 @@ def _row_identity_value(row: dict[str, Any], field: str, matching: dict[str, Any
     return _generic_normalize_identity(value, operation)
 
 
+def _identifier_tokens(value: Any) -> set[str]:
+    text = unicodedata.normalize("NFKC", str(value or "")).upper()
+    return {
+        normalize_identifier(token)
+        for token in re.findall(r"[A-Z0-9]+(?:[-_][A-Z0-9]+)*", text)
+        if any(character.isdigit() for character in token)
+    } - {""}
+
+
 def _generic_identifier_value(value: Any) -> str | None:
     """Compare the identifier token in a cited value, not its varying label."""
+    if len(_identifier_tokens(value)) > 1:
+        return None
     text = unicodedata.normalize("NFKC", str(value or "")).upper()
     cjk_positions = [index for index, character in enumerate(text)
                      if "\u3400" <= character <= "\u9fff"]
@@ -278,8 +290,17 @@ def compare_declared_field(
     elif operation == "identifier":
         left_identifier = _generic_identifier_value(left.get("raw_text"))
         right_identifier = _generic_identifier_value(right.get("raw_text"))
-        equal = (left_identifier == right_identifier
-                 if left_identifier is not None and right_identifier is not None else None)
+        if left_identifier is not None and right_identifier is not None:
+            equal = left_identifier == right_identifier
+        else:
+            left_tokens = _identifier_tokens(left.get("raw_text"))
+            right_tokens = _identifier_tokens(right.get("raw_text"))
+            if left_tokens and right_tokens and (
+                (semantic_status == "MATCH" and left_tokens == right_tokens)
+                or semantic_status == "MISMATCH"
+            ):
+                return semantic_status
+            equal = None
     else:
         equal = _generic_normalize_identity(left.get("raw_text"), operation) == _generic_normalize_identity(
             right.get("raw_text"), operation,
@@ -552,13 +573,19 @@ def _generic_path_value(doc: dict[str, Any], module: dict[str, Any], path: str) 
     return value
 
 
-def _context_values_match(left_value: Any, right_value: Any, operation: str) -> bool | None:
+def _context_values_match(
+    left_value: Any, right_value: Any, operation: str, *, max_days: int | None = None,
+) -> bool | None:
     if left_value in (None, "") or right_value in (None, ""):
         return None
-    if operation in {"before_or_equal", "reference_before_or_equal"}:
+    if operation in {"before_or_equal", "reference_before_or_equal", "within_days"}:
         left_date, right_date = _generic_date(left_value), _generic_date(right_value)
         if not left_date or not right_date:
             return None
+        if operation == "within_days":
+            if max_days is None:
+                return None
+            return abs((date.fromisoformat(left_date) - date.fromisoformat(right_date)).days) <= max_days
         if operation == "reference_before_or_equal":
             return right_date <= left_date
         return left_date <= right_date
@@ -579,9 +606,12 @@ def evaluate_declared_context(
     def assess(check: dict[str, Any], *, required: bool = True) -> bool | None:
         left = _generic_path_value(target_doc, {}, check["target_path"])
         right = _generic_path_value(reference_doc, {}, check["reference_path"])
-        matches = _context_values_match(left, right, check["operation"])
+        matches = _context_values_match(left, right, check["operation"], max_days=check.get("max_days"))
         if matches is None and not required:
             return None
+        if check.get("on_mismatch") == "warn" and matches is False:
+            assessments.append({"label": check["label"], "status": "WARN"})
+            return True
         assessments.append({"label": check["label"], "status": "MATCH" if matches else "UNRESOLVED"})
         return matches
 
@@ -590,6 +620,8 @@ def evaluate_declared_context(
         checks.extend(comparison.get("context_checks_by_reference_role", {}).get(reference_role, []))
     for check in checks:
         matches = assess(check, required=check.get("required", True))
+        if check.get("on_mismatch") == "warn":
+            continue
         if matches is False or matches is None and check.get("required", True):
             unresolved = True
     for group in comparison.get("context_check_groups", []):
@@ -642,21 +674,43 @@ def _generic_compare_module(
         return {**base, "status": "MISSING_MODULE", "differences": [diff]}
 
     scope_unresolved = False
+    context_warnings: list[tuple[tuple[str, str, str, str], str]] = []
+    failure_reasons: list[str] = []
     for check in plan["comparison"].get("context_checks", []):
         left_value = _generic_path_value(left_doc, left_module, check["target_path"])
         right_value = _generic_path_value(right_doc, right_module, check["reference_path"])
-        equal = _context_values_match(left_value, right_value, check["operation"])
-        if equal is None:
-            scope_unresolved = scope_unresolved or check["required"]
+        equal = _context_values_match(
+            left_value, right_value, check["operation"], max_days=check.get("max_days"),
+        )
+        if check.get("on_mismatch") == "warn":
+            if equal is False:
+                warn_key = (check["target_path"], check["reference_path"], str(left_value), str(right_value))
+                context_warnings.append((
+                    warn_key,
+                    f"{check['label']}（招募说明书：{left_value}，定期报告：{right_value}），已继续逐项比较。",
+                ))
             continue
-        scope_unresolved = scope_unresolved or equal is not True
+        if equal is None:
+            if check["required"]:
+                scope_unresolved = True
+                failure_reasons.append(
+                    f"{check['label']}缺失（招募说明书：{left_value or '未识别'}，定期报告：{right_value or '未识别'}）"
+                )
+            continue
+        if equal is not True:
+            scope_unresolved = True
+            failure_reasons.append(
+                f"{check['label']}未通过（招募说明书：{left_value}，定期报告：{right_value}）"
+            )
     for group in plan["comparison"].get("context_check_groups", []):
         matched = 0
         conflict = False
         for check in group["checks"]:
             left_value = _generic_path_value(left_doc, left_module, check["target_path"])
             right_value = _generic_path_value(right_doc, right_module, check["reference_path"])
-            equal = _context_values_match(left_value, right_value, check["operation"])
+            equal = _context_values_match(
+                left_value, right_value, check["operation"], max_days=check.get("max_days"),
+            )
             if equal is None:
                 continue
             if equal:
@@ -665,12 +719,18 @@ def _generic_compare_module(
                 conflict = True
         if conflict or matched < group["minimum_matches"]:
             scope_unresolved = True
+            failure_reasons.append(f"{group['label']}未能确认一致")
     if scope_unresolved:
+        review_message = (
+            "规则声明的基金身份、期间或适用范围未能确认一致（" + "；".join(failure_reasons) + "），已停止逐行差异判定。"
+            if failure_reasons
+            else "规则声明的基金身份、期间或适用范围未能确认一致，已停止逐行差异判定。"
+        )
         return {
             **base,
             "status": "UNRESOLVED_STRUCTURE",
             "differences": [],
-            "review_message": "规则声明的基金身份、期间或适用范围未能确认一致，已停止逐行差异判定。",
+            "review_message": review_message,
         }
 
     left_rows = left_module.get("rows", [])
@@ -746,10 +806,15 @@ def _generic_compare_module(
                 unresolved = True
                 continue
             present = left_row or right_row or {}
+            side_msg = (
+                "双方结构已核验，仅在招募说明书中披露该行，定期报告未出现。"
+                if left_row is not None
+                else "双方结构已核验，仅在定期报告中披露该行，招募说明书未出现。"
+            )
             diff = _field_difference(key, label, "row",
                                      {"raw_text": present.get("label"), "evidence": present.get("row_evidence")} if left_row else None,
                                      {"raw_text": present.get("label"), "evidence": present.get("row_evidence")} if right_row else None,
-                                     "MISSING_ROW", "仅在一侧文档中出现")
+                                     "MISSING_ROW", side_msg)
             differences.append(diff)
             continue
         for field_spec in plan["comparison"]["fields"]:
@@ -759,22 +824,24 @@ def _generic_compare_module(
                 if field_spec["required"]:
                     unresolved = True
                     differences.append(_field_difference(key, label, field, left_value, right_value,
-                                                         "UNRESOLVED", "比较所需字段未能完整识别"))
+                                                         "UNRESOLVED", "比较所需字段未能完整识别，需人工复核。"))
                 continue
             if any((value.get("evidence") or {}).get("status") != "LOCATED" for value in (left_value, right_value)):
                 unresolved = True
                 differences.append(_field_difference(key, label, field, left_value, right_value,
-                                                     "UNRESOLVED", "字段原文证据未能定位"))
+                                                     "UNRESOLVED", "字段原文证据未能定位，需人工复核。"))
                 continue
             field_status = compare_declared_field(field_spec, left_value, right_value)
             if field_status == "UNRESOLVED":
                 unresolved = True
                 differences.append(_field_difference(key, label, field, left_value, right_value,
-                                                     "UNRESOLVED", "字段值或比较口径无法确认"))
+                                                     "UNRESOLVED", "字段值或比较口径无法确认，需人工复核。"))
             elif field_status == "MISMATCH":
-                differences.append(_field_difference(key, label, field, left_value, right_value,
-                                                     "MISMATCH", f"{field_spec['label']}披露不一致",
-                                                     field_label=field_spec["label"]))
+                differences.append(_field_difference(
+                    key, label, field, left_value, right_value, "MISMATCH",
+                    f"双方原文及引用已核验，按规则声明的比较口径判定{field_spec['label']}披露不一致。",
+                    field_label=field_spec["label"],
+                ))
 
     if any(item["status"] in {"MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE"} for item in differences):
         status = "MISMATCH"
@@ -804,6 +871,7 @@ def _generic_compare_module(
     return {**base, "status": status, "differences": differences,
             "periodic_rows": display_right_rows,
             "review_message": " ".join(messages) or None,
+            **({"context_warnings": context_warnings} if context_warnings else {}),
             **({"disclosure_ranges": disclosure_ranges} if disclosure_ranges is not None else {})}
 
 
@@ -863,10 +931,17 @@ def compare_documents(
     ]
     module_ids = list(dict.fromkeys([*discovered_ids, *(execution_plans or {}).keys()]))
     modules = []
+    seen_warn_keys: set[tuple[str, str, str, str]] = set()
+    warnings: list[str] = []
     for module_id in module_ids:
         plan = execution_plans.get(module_id)
         if plan is not None:
-            modules.append(_generic_compare_module(plan, prospectus, periodic_report, blocked_status))
+            compared_module = _generic_compare_module(plan, prospectus, periodic_report, blocked_status)
+            for warn_key, warn_text in compared_module.pop("context_warnings", []):
+                if warn_key not in seen_warn_keys:
+                    seen_warn_keys.add(warn_key)
+                    warnings.append(warn_text)
+            modules.append(compared_module)
         else:
             modules.append(_compare_module_without_plan(module_id, prospectus, periodic_report, blocked_status))
     differences = [item for module in modules for item in module["differences"]]
@@ -884,6 +959,6 @@ def compare_documents(
             "periodic_report": {"filename": periodic_report.get("filename"), "page_count": periodic_report.get("page_count"), "page_dimensions": periodic_report.get("page_dimensions", []), "document_info": right_info, "metadata_evidence": periodic_report.get("metadata_evidence", {})},
         },
         "difference_count": real_differences,
-        "warnings": [],
+        "warnings": warnings,
         "modules": modules,
     }

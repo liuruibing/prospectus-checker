@@ -358,6 +358,48 @@ async def _load_base_documents(context: Any) -> dict[str, Any]:
     }
 
 
+def _hydrate_investment_document_dates(
+    prospectus: dict[str, Any],
+    periodic_report: dict[str, Any],
+    preflight: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Backfill unparsed day-level disclosure dates from verified preflight facts."""
+    left_info = dict(prospectus.get("document_info") or {})
+    right_info = dict(periodic_report.get("document_info") or {})
+    left_evidence = dict(prospectus.get("metadata_evidence") or {})
+    right_evidence = dict(periodic_report.get("metadata_evidence") or {})
+
+    right_pre = preflight.get("periodic_report") or {}
+    if not right_info.get("disclosure_date"):
+        send_interval = right_pre.get("report_send_date_interval") or {}
+        if send_interval.get("start") and send_interval.get("start") == send_interval.get("end"):
+            right_info["disclosure_date"] = send_interval["start"]
+            right_evidence["disclosure_date_source"] = right_pre.get("report_send_date_quote") or "preflight"
+
+    left_pre = preflight.get("prospectus") or {}
+    if not left_info.get("disclosure_date"):
+        version_interval = left_pre.get("version_date_interval") or {}
+        cover_interval = left_pre.get("date_interval") or {}
+        right_disclosure = right_info.get("disclosure_date")
+        if version_interval.get("start") and version_interval.get("start") == version_interval.get("end"):
+            left_info["disclosure_date"] = version_interval["start"]
+            left_evidence["disclosure_date_source"] = left_pre.get("version_date_quote") or "preflight"
+        elif (
+            cover_interval.get("start")
+            and right_disclosure
+            and str(right_disclosure) < str(cover_interval["start"])
+        ):
+            # When the periodic report was disclosed strictly before the first day
+            # of the prospectus cover month, precedence holds for every day in that month.
+            left_info["disclosure_date"] = cover_interval["start"]
+            left_evidence["disclosure_date_source"] = left_pre.get("date_quote") or "cover_month_lower_bound"
+
+    return (
+        {**prospectus, "document_info": left_info, "metadata_evidence": left_evidence},
+        {**periodic_report, "document_info": right_info, "metadata_evidence": right_evidence},
+    )
+
+
 class InvestmentComparisonWorkflow:
     """AI-base WorkflowProtocol implementation backed by an actual LangGraph."""
 
@@ -496,8 +538,11 @@ class InvestmentComparisonWorkflow:
             })
             payload = state["payload"]
             snapshot = payload.get("rule_snapshot") or {}
+            prospectus_doc, periodic_doc = _hydrate_investment_document_dates(
+                state["prospectus"], state["periodic_report"], state.get("preflight") or {},
+            )
             result = compare_documents(
-                state["prospectus"], state["periodic_report"],
+                prospectus_doc, periodic_doc,
                 execution_plans=snapshot.get("execution_plans"),
             )
             trace_callback = getattr(context, "trace_callback", None)

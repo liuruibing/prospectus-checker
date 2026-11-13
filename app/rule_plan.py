@@ -13,7 +13,8 @@ from typing import Any
 PLAN_PROTOCOL_VERSION = 2
 _FIELD = re.compile(r"^[a-z][a-z0-9_]*$")
 _OPERATIONS = {"decimal", "identifier", "text", "date", "semantic", "equals"}
-_CONTEXT_OPERATIONS = _OPERATIONS | {"matches_target", "before_or_equal", "reference_before_or_equal"}
+_CONTEXT_OPERATIONS = _OPERATIONS | {"matches_target", "before_or_equal", "reference_before_or_equal", "within_days"}
+_MISMATCH_ACTIONS = {"block", "warn"}
 _POPULATIONS = {"target_document", "both_documents"}
 _ROLES = {"prospectus", "periodic_report", "product_summary"}
 _SOURCE_FACTS = {
@@ -361,7 +362,11 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
             label = f"{prefix}[{index}]"
             if not isinstance(check, dict):
                 raise ExecutionPlanError(f"{label} 必须是对象")
-            _only_keys(check, {"label", "target_path", "reference_path", "operation", "required"}, label)
+            _only_keys(
+                check,
+                {"label", "target_path", "reference_path", "operation", "required", "max_days", "on_mismatch"},
+                label,
+            )
             check_label = _string(check.get("label"), f"{label}.label")
             paths = {}
             for path_key in ("target_path", "reference_path"):
@@ -380,12 +385,27 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
                 raise ExecutionPlanError(f"{label}.operation 不支持：{operation}")
             if not isinstance(check.get("required"), bool):
                 raise ExecutionPlanError(f"{label}.required 必须是布尔值")
-            normalized.append({
+            entry: dict[str, Any] = {
                 "label": check_label,
                 **paths,
                 "operation": operation,
                 "required": check["required"],
-            })
+            }
+            max_days = check.get("max_days")
+            if operation == "within_days":
+                if not isinstance(max_days, int) or isinstance(max_days, bool) or max_days <= 0:
+                    raise ExecutionPlanError(f"{label}.max_days 必须是正整数")
+                entry["max_days"] = max_days
+            elif max_days is not None:
+                raise ExecutionPlanError(f"{label}.max_days 只能用于 within_days 运算")
+            on_mismatch = check.get("on_mismatch")
+            if on_mismatch is not None:
+                on_mismatch_value = _string(on_mismatch, f"{label}.on_mismatch")
+                if on_mismatch_value not in _MISMATCH_ACTIONS:
+                    raise ExecutionPlanError(f"{label}.on_mismatch 不支持：{on_mismatch_value}")
+                if on_mismatch_value != "block":
+                    entry["on_mismatch"] = on_mismatch_value
+            normalized.append(entry)
         return normalized
 
     normalized_context_checks = normalize_context_checks(
@@ -405,6 +425,7 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
     def context_check_key(check: dict[str, Any]) -> tuple[Any, ...]:
         return (
             check["target_path"], check["reference_path"], check["operation"], check["required"],
+            check.get("max_days"), check.get("on_mismatch", "block"),
         )
 
     # A condition explicitly scoped to a source role must not also run as a
@@ -417,10 +438,22 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
         for checks in normalized_role_context_checks.values()
         for check in checks
     }
-    normalized_context_checks = [
-        check for check in normalized_context_checks
-        if context_check_key(check) not in role_scoped_keys
-    ]
+    remaining_context_checks: list[dict[str, Any]] = []
+    role_contract_paths = {
+        "document.metadata.sent_date": "periodic_report",
+        "document.metadata.version_date": "prospectus",
+    }
+    for check in normalized_context_checks:
+        key = context_check_key(check)
+        if key in role_scoped_keys:
+            continue
+        inferred_role = role_contract_paths.get(check["reference_path"])
+        if normalized_role_context_checks and inferred_role in reference_roles and inferred_role not in normalized_role_context_checks:
+            normalized_role_context_checks.setdefault(inferred_role, []).append(check)
+            role_scoped_keys.add(key)
+            continue
+        remaining_context_checks.append(check)
+    normalized_context_checks = remaining_context_checks
     for role, checks in normalized_role_context_checks.items():
         unique_checks: list[dict[str, Any]] = []
         seen_checks: set[tuple[Any, ...]] = set()
@@ -566,9 +599,17 @@ def eligible_fallbacks(plan: dict[str, Any], facts: dict[str, Any]) -> list[dict
                 for group in item["when_any"]
             ))
         )
-        candidate_review = any(
-            all(matches(condition) for condition in group)
-            for group in item.get("candidate_review_when_any", [])
+        primary_confirmed = (
+            str(facts.get("primary.status") or "").strip().casefold() == "found"
+            and str(facts.get("primary.applicability") or "").strip().casefold() in {"confirmed", "not_required"}
+            and str(facts.get("primary.coverage") or "").strip().casefold() != "partial"
+        )
+        candidate_review = (
+            not primary_confirmed
+            and any(
+                all(matches(condition) for condition in group)
+                for group in item.get("candidate_review_when_any", [])
+            )
         )
         if direct:
             result.append({"role": item["role"], "mode": "select"})

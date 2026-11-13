@@ -69,3 +69,25 @@ def test_rule_store_rejects_path_traversal(tmp_path, monkeypatch):
 
     with pytest.raises(FileNotFoundError):
         rule_store.get_rule("investment", "../outside.md")
+
+
+def test_list_rules_includes_dynamic_category_metadata(tmp_path, monkeypatch):
+    root = tmp_path / "rules"
+    (root / "investment").mkdir(parents=True)
+    (root / "product_summary").mkdir(parents=True)
+    (root / "investment" / "common_公共规则.md").write_text("# 投资公共规则\n\n## 核对对象\n内容\n", encoding="utf-8")
+    (root / "investment" / "asset_allocation.md").write_text("# 资产组合\n\n## 核对对象\n内容\n", encoding="utf-8")
+    (root / "product_summary" / "common_概要公共.md").write_text("# 概要公共规则\n\n## 核对对象\n内容\n", encoding="utf-8")
+    (root / "product_summary" / "management_fee.md").write_text("# 管理费率\n\n## 核对对象\n内容\n", encoding="utf-8")
+    monkeypatch.setattr(rule_store, "RULE_ROOT", root)
+    monkeypatch.setattr(
+        rule_store,
+        "load_compiled_execution_plan",
+        lambda path, _content=None: {"business_group": "费用信息"} if path.name == "management_fee.md" else None,
+    )
+
+    items = {(item["scope"], item["filename"]): item for item in rule_store.list_rules()}
+    assert items[("investment", "common_公共规则.md")]["category_label"] == "全局规则"
+    assert items[("investment", "asset_allocation.md")]["category_label"] == "核对章节"
+    assert items[("product_summary", "common_概要公共.md")]["category_label"] == "全局规则"
+    assert items[("product_summary", "management_fee.md")]["category_label"] == "费用信息"

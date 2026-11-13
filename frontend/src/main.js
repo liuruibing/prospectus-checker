@@ -7,6 +7,7 @@ import "./styles.css";
 import App from "./App.vue";
 import Workbench from "./views/Workbench.vue";
 import TaskList from "./views/TaskList.vue";
+import RuleManagement from "./views/RuleManagement.vue";
 
 Vue.use(VueRouter);
 Vue.use(ElementUI, { size: "small" });
@@ -16,6 +17,7 @@ const router = new VueRouter({
   mode: "hash",
   routes: [
     { path: "/", component: TaskList },
+    { path: "/rules", component: RuleManagement },
     { path: "/tasks/:taskId", component: Workbench },
     { path: "*", redirect: "/" },
   ],

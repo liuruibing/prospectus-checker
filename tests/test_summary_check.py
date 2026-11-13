@@ -155,6 +155,14 @@ def test_final_comparison_reason_matches_deterministic_status():
     assert "上下文条件未全部通过" in _reason_for_final_status(
         "UNRESOLVED", "模型认为双方一致", model_status="MATCH", declared_context_clear=False,
     )
+    sanitized = _reason_for_final_status(
+        "UNRESOLVED",
+        "定期报告候选及原文均未提供；报告coverage为batch_count 0（periodic_report.sent_date）。",
+    )
+    assert "coverage" not in sanitized
+    assert "batch_count" not in sanitized
+    assert "periodic_report.sent_date" not in sanitized
+    assert "定期报告送出日" in sanitized
 
 
 def test_review_conditions_must_be_explicitly_resolved_with_rule_scoped_evidence():

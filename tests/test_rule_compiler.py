@@ -140,7 +140,9 @@ def test_compiler_assigns_each_condition_one_authoritative_execution_path(tmp_pa
     assert "若候选必须先从备用来源原文核实其身份、合同关系、费率性质、生效日期、目标时点适用性或口径，则使用 candidate_review_when_any 打开审核" in prompt
     assert "中文规则明确允许在主来源状态未知时独立审查备用来源" in prompt
     assert "属于结果表述约束" in prompt
-    assert compiler.PROMPT_VERSION == "rule-interpretation-48"
+    assert "严禁按常规金融语义或习惯擅自改归其他分类" in prompt
+    assert "严禁在 comparison.context_checks、context_checks_by_reference_role 或 context_check_groups 中生成基于 document.metadata.fund_name 或 document.metadata.fund_code 的身份校验" in prompt
+    assert compiler.PROMPT_VERSION == "rule-interpretation-51"
 
 
 def test_compiler_rejects_unloadable_plan_without_activation(tmp_path, monkeypatch):
@@ -228,6 +230,32 @@ def test_execution_plan_removes_global_copies_of_role_scoped_context_checks():
 
     assert validated["comparison"]["context_checks"] == []
     assert len(validated["comparison"]["context_checks_by_reference_role"]["prospectus"]) == 1
+
+
+def test_execution_plan_moves_role_contract_date_check_from_global_when_other_role_is_scoped():
+    plan = _valid_execution_plan()
+    sent_check = {
+        "label": "定期报告送出日不晚于概要编制日",
+        "target_path": "document.metadata.compiled_date",
+        "reference_path": "document.metadata.sent_date",
+        "operation": "reference_before_or_equal",
+        "required": True,
+    }
+    version_check = {
+        "label": "招募说明书版本日不晚于概要编制日",
+        "target_path": "document.metadata.compiled_date",
+        "reference_path": "document.metadata.version_date",
+        "operation": "reference_before_or_equal",
+        "required": True,
+    }
+    plan["comparison"]["context_checks"] = [sent_check]
+    plan["comparison"]["context_checks_by_reference_role"] = {"prospectus": [version_check]}
+
+    validated = validate_execution_plan(plan)
+
+    assert validated["comparison"]["context_checks"] == []
+    assert validated["comparison"]["context_checks_by_reference_role"]["periodic_report"] == [sent_check]
+    assert validated["comparison"]["context_checks_by_reference_role"]["prospectus"] == [version_check]
 
 
 def test_execution_plan_accepts_generic_target_context_match():
@@ -467,6 +495,24 @@ def test_candidate_review_is_distinct_from_automatic_source_switch():
         {"role": "prospectus", "mode": "candidate_review"},
     ]
     assert eligible_fallbacks(normalized, {}) == []
+
+    # Candidate review must not trigger when the primary source is already found and confirmed complete.
+    plan_with_effective = _valid_execution_plan()
+    plan_with_effective["source_selection"]["fallbacks"] = [{
+        "role": "prospectus",
+        "when": [{"fact": "primary.status", "operator": "equals", "value": "CONFIRMED_ABSENT"}],
+        "candidate_review_when_any": [[
+            {"fact": "scope.fund_identity", "operator": "matches_target", "value": "target.scope.fund_identity"},
+        ]],
+    }]
+    normalized_with_effective = validate_execution_plan(plan_with_effective)
+    assert eligible_fallbacks(normalized_with_effective, {
+        "primary.status": "FOUND",
+        "primary.applicability": "CONFIRMED",
+        "primary.coverage": "COMPLETE",
+        "scope.fund_identity": "000001",
+        "target.scope.fund_identity": "000001",
+    }) == []
 
     plan["source_selection"]["fallbacks"][0]["candidate_review_when_any"] = [[
         {"fact": "chapter.fee", "operator": "equals", "value": "current"},

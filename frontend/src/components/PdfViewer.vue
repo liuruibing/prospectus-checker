@@ -5,16 +5,73 @@
         <span class="pdf-title-icon" :class="roleName">{{ roleName === 'prospectus' ? '招' : '报' }}</span>
         <div><strong>{{ title }}</strong><small>{{ documentInfo ? documentInfo.filename : '尚未上传 PDF' }}</small></div>
       </div>
-      <div v-if="documentInfo" class="pdf-controls">
-        <el-button size="mini" icon="el-icon-arrow-left" aria-label="上一页" @click="changePage(-1)" />
-        <span class="page-number-control">
-          <el-input-number v-model="currentPage" :min="1" :max="pageCount" size="mini" controls-position="right" @change="goToPage" />
-          <span>/ {{ pageCount }}</span>
-        </span>
-        <el-button size="mini" icon="el-icon-arrow-right" aria-label="下一页" @click="changePage(1)" />
-        <el-button size="mini" icon="el-icon-minus" aria-label="缩小" @click="changeZoom(-10)" />
-        <span class="zoom-value">{{ zoom }}%</span>
-        <el-button size="mini" icon="el-icon-plus" aria-label="放大" @click="changeZoom(10)" />
+      <div v-if="documentInfo" class="pdf-controls" role="toolbar" aria-label="PDF 阅读控制">
+        <div class="pdf-control-group" role="group" aria-label="翻页">
+          <button
+            type="button"
+            class="pdf-tool-btn"
+            aria-label="上一页"
+            title="上一页"
+            :aria-disabled="currentPage <= 1 ? 'true' : null"
+            @click="currentPage > 1 && changePage(-1)"
+          >
+            <i class="el-icon-arrow-left" aria-hidden="true" />
+          </button>
+          <span class="page-number-control">
+            <input
+              v-model="pageInput"
+              type="text"
+              inputmode="numeric"
+              aria-label="当前页码"
+              class="pdf-page-input"
+              @keydown.enter.prevent="commitPage"
+              @blur="commitPage"
+            >
+            <span class="pdf-page-total">/ {{ pageCount }}</span>
+          </span>
+          <button
+            type="button"
+            class="pdf-tool-btn"
+            aria-label="下一页"
+            title="下一页"
+            :aria-disabled="currentPage >= pageCount ? 'true' : null"
+            @click="currentPage < pageCount && changePage(1)"
+          >
+            <i class="el-icon-arrow-right" aria-hidden="true" />
+          </button>
+        </div>
+        <span class="pdf-control-divider" role="separator" aria-orientation="vertical" />
+        <div class="pdf-control-group" role="group" aria-label="缩放">
+          <button
+            type="button"
+            class="pdf-tool-btn"
+            aria-label="缩小"
+            title="缩小"
+            :aria-disabled="zoom <= 60 ? 'true' : null"
+            @click="zoom > 60 && changeZoom(-10)"
+          >
+            <i class="el-icon-minus" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="pdf-zoom-btn"
+            aria-label="重置缩放为 100%"
+            title="点击重置为 100%"
+            @click="resetZoom"
+          >
+            {{ zoom }}%
+          </button>
+          <button
+            type="button"
+            class="pdf-tool-btn"
+            aria-label="放大"
+            title="放大"
+            :aria-disabled="zoom >= 160 ? 'true' : null"
+            @click="zoom < 160 && changeZoom(10)"
+          >
+            <i class="el-icon-plus" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </header>
 
@@ -41,7 +98,6 @@
               :class="statusClass(item.difference_status)"
               :style="boxStyle(item)"
             >
-              <span>{{ item.field_label || '核对位置' }}</span>
             </div>
           </div>
         </article>
@@ -70,7 +126,7 @@ export default {
     evidences: { type: Array, default: () => [] },
   },
   data() {
-    return { currentPage: 1, zoom: 100, pageObserver: null, imageErrors: {} };
+    return { currentPage: 1, pageInput: "1", zoom: 100, pageObserver: null, imageErrors: {} };
   },
   computed: {
     pageCount() {
@@ -105,8 +161,12 @@ export default {
   watch: {
     previewId() {
       this.currentPage = 1;
+      this.pageInput = "1";
       this.imageErrors = {};
       this.$nextTick(this.observePages);
+    },
+    currentPage(value) {
+      this.pageInput = String(value);
     },
     evidences: {
       deep: true,
@@ -200,14 +260,24 @@ export default {
         behavior: "smooth",
       });
     },
-    goToPage() {
-      this.scrollToPage(this.currentPage);
+    commitPage() {
+      const parsed = Number.parseInt(String(this.pageInput || "").trim(), 10);
+      if (Number.isNaN(parsed)) {
+        this.pageInput = String(this.currentPage);
+        return;
+      }
+      const target = Math.max(1, Math.min(this.pageCount, parsed));
+      this.pageInput = String(target);
+      this.scrollToPage(target);
     },
     changePage(delta) {
       this.scrollToPage(this.currentPage + delta);
     },
     changeZoom(delta) {
       this.zoom = Math.max(60, Math.min(160, this.zoom + delta));
+    },
+    resetZoom() {
+      this.zoom = 100;
     },
     updateCurrentPage() {
       const scroller = this.$refs.scroller;

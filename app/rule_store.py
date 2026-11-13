@@ -14,8 +14,8 @@ from app.rule_compiler import _is_plain_chinese_rule, load_compiled_execution_pl
 
 RULE_ROOT = Path(__file__).resolve().parents[1] / "rules"
 RULE_SCOPES = {
-    "investment": "投资组合核对",
-    "product_summary": "产品资料概要核对",
+    "investment": "招募说明书",
+    "product_summary": "产品资料概要",
 }
 MAX_RULE_BYTES = 512_000
 
@@ -56,6 +56,20 @@ def _title(scope: str, filename: str, content: str) -> str:
     return Path(filename).stem.replace("_", " ")
 
 
+def _category_meta(scope: str, path: Path, content: str) -> tuple[bool, str]:
+    is_common = path.name.startswith("common_")
+    if is_common:
+        return True, "全局规则"
+    if scope == "investment":
+        return False, "核对章节"
+    try:
+        plan = load_compiled_execution_plan(path, content)
+    except (OSError, ValueError):
+        plan = None
+    group = plan.get("business_group") if isinstance(plan, dict) else None
+    return False, str(group).strip() if isinstance(group, str) and group.strip() else "未分类"
+
+
 def list_rules() -> list[dict[str, Any]]:
     entries = []
     for scope, label in RULE_SCOPES.items():
@@ -64,9 +78,12 @@ def list_rules() -> list[dict[str, Any]]:
             if path.is_symlink() or not path.is_file():
                 continue
             content = path.read_text(encoding="utf-8")
+            is_common, category_label = _category_meta(scope, path, content)
             entries.append({
                 "scope": scope,
                 "scope_label": label,
+                "is_common": is_common,
+                "category_label": category_label,
                 "filename": path.name,
                 "title": _title(scope, path.name, content),
                 "sha256": _file_hash(content),
@@ -79,9 +96,12 @@ def list_rules() -> list[dict[str, Any]]:
 def get_rule(scope: str, filename: str) -> dict[str, Any]:
     path = _rule_path(scope, filename)
     content = path.read_text(encoding="utf-8")
+    is_common, category_label = _category_meta(scope, path, content)
     return {
         "scope": scope,
         "scope_label": RULE_SCOPES[scope],
+        "is_common": is_common,
+        "category_label": category_label,
         "filename": path.name,
         "title": _title(scope, path.name, content),
         "content": content,

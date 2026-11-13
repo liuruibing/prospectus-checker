@@ -80,7 +80,7 @@ def _matching_date(
 def _extract_product_name(text: str, role: str) -> str | None:
     compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
     if role == "product_summary":
-        match = re.search(r"(?P<name>[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9（）()·]{2,100}?基金)(?:\([^)]{1,30}份额\))?(?:基金)?产品资料概要", compact)
+        match = re.search(r"(?P<name>[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9（）()·]{2,100}?基金)(?:\([^)]{1,40}\))?(?:基金)?产品资料概要", compact)
         return match.group("name") if match else None
     if role == "prospectus":
         lines = [re.sub(r"\s+", "", unicodedata.normalize("NFKC", line)) for line in text.splitlines()]
@@ -114,10 +114,74 @@ def _extract_product_name(text: str, role: str) -> str | None:
     return None
 
 
+def _extract_labeled_fund_name(text: str, label: str) -> str | None:
+    """Read a labelled fund name from document identity tables."""
+    lines = [
+        re.sub(r"\s+", "", unicodedata.normalize("NFKC", line))
+        for line in text.splitlines()
+    ]
+    stop_labels = (
+        "基金简称", "基金全称", "基金名称", "基金代码", "基金主代码", "基金管理人", "基金托管人", "基金合同生效日",
+        "上市交易所", "基金类型", "交易币种", "交易代码", "运作方式", "开放频率",
+    )
+    for index, line in enumerate(lines):
+        marker = line.find(label)
+        if marker < 0:
+            continue
+        value = line[marker + len(label):].lstrip("：:")
+        if not value:
+            for candidate in lines[index + 1:index + 4]:
+                if not candidate:
+                    continue
+                if any(candidate.startswith(stop) for stop in stop_labels):
+                    break
+                value = candidate
+                break
+        if value:
+            for stop in stop_labels:
+                position = value.find(stop)
+                if position > 0:
+                    value = value[:position]
+            value = value.strip("：:，,；;。．")
+            if len(value) >= 2 and not value.isdigit() and value not in stop_labels:
+                return value
+    return None
+
+
+def _extract_fund_short_name(text: str) -> str | None:
+    return _extract_labeled_fund_name(text, "基金简称")
+
+
+def _extract_fund_full_name(text: str) -> str | None:
+    return _extract_labeled_fund_name(text, "基金全称") or _extract_labeled_fund_name(text, "基金名称")
+
+
+def _extract_product_name_from_filename(filename: str) -> str | None:
+    stem = unicodedata.normalize("NFKC", filename.rsplit("/", 1)[-1])
+    stem = re.sub(r"(?i)\.pdf$", "", stem)
+    stem = re.sub(r"^20\d{2}[-_.年]\d{1,2}(?:[-_.月]\d{1,2}日?)?[_\s-]*", "", stem)
+    stem = re.sub(r"^(?:定期报告|招募说明书|产品资料概要|基金产品资料概要)[_\s-]*", "", stem)
+    match = re.search(
+        r"(?P<name>[\u4e00-\u9fffA-Za-z0-9（）()·]{4,120}?基金)"
+        r"(?=20\d{2}年|(?:更新的?|更新)?招募说明书|(?:基金)?产品资料概要|"
+        r"年度报告|半年度报告|中期报告|第[1-4]季度报告|[_\-.]|$)",
+        stem,
+    )
+    return match.group("name").strip(" _-.") if match else None
+
+
 def _extract_fund_code(text: str) -> str | None:
     compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
-    match = re.search(r"(?:基金主代码|基金代码|主代码)[:：]?([0-9]{6})", compact)
-    return match.group(1) if match else None
+    for pattern in (
+        r"基金主代码[:：]?([0-9]{6})",
+        r"(?:基金代码|主代码)[:：]?([0-9]{6})(?![（(]后端[）)])",
+        r"下属基金代码[:：]?([0-9]{6})",
+        r"(?:基金代码|主代码)[:：]?([0-9]{6})",
+    ):
+        match = re.search(pattern, compact)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _extract_fund_codes(text: str) -> list[str]:
@@ -147,6 +211,28 @@ def _filename_date_candidate(filename: str) -> tuple[date, str] | None:
     return parsed, match.group(0)
 
 
+def _apply_consistent_batch_fund_names(documents: list[dict[str, Any]]) -> None:
+    """Use one name field for each coded fund when every batch document has it."""
+    by_code: dict[str, list[dict[str, Any]]] = {}
+    for document in documents:
+        code = document.get("fund_code")
+        if code:
+            by_code.setdefault(str(code), []).append(document)
+
+    for group in by_code.values():
+        if all(document.get("fund_short_name") for document in group):
+            field = "fund_short_name"
+        elif all(document.get("fund_full_name") for document in group):
+            field = "fund_full_name"
+        else:
+            field = None
+        for document in group:
+            document["fund_name"] = (
+                document.get(field) if field
+                else document.get("fund_full_name") or document.get("fund_short_name") or document.get("fund_name")
+            )
+
+
 def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, Any]:
     filename_date = _filename_date_candidate(filename)
     document = fitz.open(stream=content, filetype="pdf")
@@ -157,18 +243,56 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
         all_text = "\n".join(page.get_text() for page in document)
         compact_first_text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", first_text))
         compact_cover_text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", cover_text))
-        is_product_summary = "产品资料概要" in compact_cover_text and any(
-            marker in compact_cover_text for marker in ("编制日期", "送出日期", "更新")
+        auto_mode = role == "auto"
+        classification_text = compact_first_text if auto_mode else compact_cover_text
+        filename_text = unicodedata.normalize("NFKC", filename)
+        filename_is_summary = "产品资料概要" in filename_text
+        filename_is_prospectus = "招募说明书" in filename_text
+        summary_position = classification_text.find("产品资料概要")
+        prospectus_position = classification_text.find("招募说明书")
+        prospectus_title_precedes_summary = (
+            prospectus_position >= 0
+            and (summary_position < 0 or prospectus_position < summary_position)
         )
-        is_periodic_report = bool(re.search(r"20\d{2}年(?:第[1-4]季度|半年度|中期|年度)报告", compact_cover_text)) and not is_product_summary
-        is_prospectus = "招募说明书" in compact_cover_text and not is_product_summary and not is_periodic_report
+        has_summary_context = summary_position >= 0 and any(
+            marker in classification_text for marker in ("编制日期", "送出日期", "更新")
+        )
+        is_product_summary = filename_is_summary or (
+            has_summary_context
+            and not filename_is_prospectus
+            and not prospectus_title_precedes_summary
+        )
+        is_periodic_report = bool(re.search(
+            r"20\d{2}年(?:第[1-4]季度|半年度|中期|年度)报告", classification_text
+        )) and not is_product_summary
+        is_prospectus = filename_is_prospectus or (
+            "招募说明书" in classification_text
+            and not is_product_summary
+            and not is_periodic_report
+        )
+        detected_roles = [
+            name for name, detected in (
+                ("prospectus", is_prospectus),
+                ("periodic_report", is_periodic_report),
+                ("product_summary", is_product_summary),
+            ) if detected
+        ]
+        if role == "auto":
+            role = detected_roles[0] if len(detected_roles) == 1 else "unknown"
         report_subtype = (
             "annual" if re.search(r"年度报告", compact_cover_text)
             else "interim" if re.search(r"半年度报告|中期报告", compact_cover_text)
             else "quarterly" if re.search(r"季度报告", compact_cover_text)
             else None
         )
-        product_name = _extract_product_name(cover_text, role)
+        name_text = first_text if auto_mode else cover_text
+        full_product_name = (
+            _extract_product_name(name_text, role)
+            or _extract_fund_full_name(name_text)
+            or _extract_product_name_from_filename(filename)
+        )
+        short_product_name = _extract_fund_short_name(name_text)
+        product_name = full_product_name or short_product_name
         # Periodic reports may place the labelled fund-identity table after
         # cover, contents, and introductory pages. Search the complete report
         # text for explicitly labelled identity codes; prospectuses and
@@ -180,7 +304,7 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
         if code and code not in identity_codes:
             identity_codes.insert(0, code)
         if role == "prospectus":
-            date_interval, date_quote = _matching_date(cover_text)
+            date_interval, date_quote = _matching_date(first_text if auto_mode else cover_text)
             date_label = "招募说明书封面日期"
             display_date_interval, display_date_quote, display_date_label = (
                 date_interval, date_quote, date_label
@@ -193,8 +317,8 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             display_date_interval, display_date_quote, display_date_label = date_interval, date_quote, date_label
             report_send_date_interval = None
             report_send_date_quote = None
-        else:
-            period_text = cover_text
+        elif role == "periodic_report":
+            period_text = first_text if auto_mode else cover_text
             send_date_labels = (
                 "报告送出日期", "送出日期", "报告披露日期", "披露日期", "公告日期",
             )
@@ -217,6 +341,10 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             if not display_date_interval:
                 display_date_interval, display_date_quote = report_send_date_interval, report_send_date_quote
                 display_date_label = date_label
+        else:
+            date_interval = date_quote = report_send_date_interval = report_send_date_quote = None
+            display_date_interval = display_date_quote = None
+            date_label = display_date_label = ""
         version_date_interval = None
         version_date_quote = None
         version_date_source = None
@@ -238,8 +366,11 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             "is_product_summary": is_product_summary,
             "is_prospectus": is_prospectus,
             "is_periodic_report": is_periodic_report,
+            "detected_roles": detected_roles,
             "report_subtype": report_subtype,
             "fund_name": product_name,
+            "fund_full_name": full_product_name,
+            "fund_short_name": short_product_name,
             "fund_code": code,
             "fund_codes": identity_codes,
             "date_label": date_label,
@@ -293,9 +424,15 @@ def preflight_documents(payload: dict[str, Any]) -> dict[str, Any]:
     )
     status = "READY"
     message = None
-    if periodic_report.get("is_product_summary"):
+    if prospectus.get("is_product_summary") or prospectus.get("is_periodic_report"):
+        status = "WRONG_TARGET_TYPE"
+        message = "左侧文件识别为定期报告或产品资料概要，请上传招募说明书。"
+    elif periodic_report.get("is_product_summary"):
         status = "WRONG_DOCUMENT_TYPE"
         message = "右侧文件识别为产品资料概要，请切换到“产品资料概要核对”模式后重新提交。"
+    elif periodic_report.get("is_prospectus"):
+        status = "WRONG_DOCUMENT_TYPE"
+        message = "右侧文件识别为招募说明书，请上传定期报告。"
     left_interval = _read_interval(prospectus.get("date_interval"))
     right_interval = _read_interval(periodic_report.get("date_interval"))
     date_gap_days = _days_between_intervals(left_interval, right_interval) if left_interval and right_interval else None

@@ -939,6 +939,43 @@ def _compare_by_execution_plan(
     )
 
 
+_TECHNICAL_REASON_REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?:报告|主来源)?\s*coverage\s*(?:为|是|:|：)?\s*batch_count\s*[=：:]?\s*0", re.IGNORECASE), "未定位到可核对的参考章节正文"),
+    (re.compile(r"coverage\s*批次数\s*(?:为|是|:|：)?\s*0", re.IGNORECASE), "未定位到可核对的参考章节正文"),
+    (re.compile(r"batch_count\s*[=：:]?\s*0", re.IGNORECASE), "未定位到可核对的参考章节正文"),
+    (re.compile(r"coverage[_\s-]*status", re.IGNORECASE), "章节覆盖状态"),
+    (re.compile(r"\bcoverage\b", re.IGNORECASE), "章节覆盖范围"),
+    (re.compile(r"\bbatch_count\b", re.IGNORECASE), "候选批次"),
+    (re.compile(r"\blogical_units?\b", re.IGNORECASE), "章节内容单元"),
+    (re.compile(r"\bsource_ids?\b", re.IGNORECASE), "原文证据"),
+    (re.compile(r"\bmetadata_refs?\b", re.IGNORECASE), "文档元数据"),
+    (re.compile(r"\bperiodic_report\.sent_date\b", re.IGNORECASE), "定期报告送出日"),
+    (re.compile(r"\bproduct_summary\.compiled_date\b", re.IGNORECASE), "概要编制日"),
+    (re.compile(r"\bprospectus\.version_date\b", re.IGNORECASE), "招募说明书版本日"),
+    (re.compile(r"\bperiodic_report\.period_end\b", re.IGNORECASE), "定期报告期末"),
+    (re.compile(r"\b(?:product_summary|periodic_report|prospectus)\.(?:fund_name|fund_code|fund_codes)\b", re.IGNORECASE), "文档基金信息"),
+    (re.compile(r"\bCONFIRMED_ABSENT\b"), "已确认未披露"),
+    (re.compile(r"\bNOT_FOUND(?:_IN_SCOPE)?\b"), "未找到"),
+    (re.compile(r"\bNOT_APPLICABLE\b"), "不适用"),
+    (re.compile(r"\bUNRESOLVED\b"), "待复核"),
+    (re.compile(r"\bPARTIAL\b"), "部分覆盖"),
+    (re.compile(r"\bCOMPLETE\b"), "完整覆盖"),
+    (re.compile(r"\bUNKNOWN\b"), "未知"),
+)
+
+
+def _humanize_user_reason(reason: str | None) -> str:
+    """Translate any leaked internal field names or enums in model reasons into plain Chinese."""
+    text = str(reason or "").strip()
+    if not text:
+        return ""
+    for pattern, replacement in _TECHNICAL_REASON_REPLACEMENTS:
+        text = pattern.sub(replacement, text)
+    text = re.sub(r"[（(]\s*[、,，;；\s]*[)）]", "", text)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return text
+
+
 def _reason_for_final_status(
     status: str, existing_reason: str | None = None, *,
     model_status: str | None = None, applicability_status: str | None = None,
@@ -956,7 +993,7 @@ def _reason_for_final_status(
             return "模型给出了比较结论，但所选来源的上下文条件未全部通过，保留待复核。"
         if applicability_status == "UNRESOLVED":
             return "模型给出了比较结论，但参考来源适用性尚未确认，保留待复核。"
-    return str(existing_reason or "规则未能确认可比较的参考事实。")
+    return _humanize_user_reason(existing_reason) or "规则未能确认可比较的参考事实。"
 
 
 async def compare_product_summary(
@@ -1071,6 +1108,7 @@ async def compare_product_summary(
         "如果某规则的comparison.fields声明多个字段，逐个按字段标签和值对应关系核对；所有必需字段一致才可总体MATCH，确认任一必需字段冲突才可总体MISMATCH，否则UNRESOLVED。"
         "逐条检查执行计划review_conditions中的每个复核条件，并按原顺序返回review_condition_assessments。复核条件由PDF原文支持时标CLEAR并提供有效source_ids；复核条件由输入提供的结构化文档元数据支持时标CLEAR，并在metadata_refs中引用准确的‘文档角色.字段名’，例如periodic_report.sent_date；元数据中的*_quote字段是该元数据事实对应的PDF原文引文。两者都可提供。metadata_refs只能引用当前输入中实际提供的字段。严禁在source_ids与metadata_refs都为空时标CLEAR；无法给出有效引用时必须改标UNRESOLVED。若条件仅由已提供且可引用的文档元数据决定，不得仅因其不是普通source_id而标REVIEW_REQUIRED。该条件明确属于本次未采用的来源或未发生的流程分支时标NOT_APPLICABLE，source_ids和metadata_refs均留空并说明分支依据；条件触发或证据不足分别使用REVIEW_REQUIRED或UNRESOLVED。不得把‘未发现相关信息’当作条件已满足。只要任一复核条件既非CLEAR也非NOT_APPLICABLE，适用性必须为UNRESOLVED，比较结论不得为MATCH或MISMATCH。"
         "目标事实和参考事实均须分别提取；仅在执行计划声明的比较要求得到证据支持时，才返回MATCH或MISMATCH。明确缺失、证据不足及无法判断应使用不同状态并说明原因。"
+        "所有面向业务用户展示的reason字段（包含顶层、references与review_condition_assessments中的reason）必须用自然流畅的中文业务语言说明依据，严禁出现任何英文字段名、程序变量名、技术术语或英文枚举值（例如coverage、batch_count、source_id、metadata_refs、logical_units、periodic_report.sent_date、FOUND、UNRESOLVED、PARTIAL、UNKNOWN等）。"
         "严格按提示给出的JSON结构返回，不要输出Markdown。"
     )
     if trace:
@@ -1434,7 +1472,7 @@ async def compare_product_summary(
                     "仅检查每项列出的完整章节原文或完整逻辑单元。verified_target存在时是锁定事实，禁止重新提取或修改，summary_candidates为空是正常情况。"
                     "找到字段返回FOUND；当前包未披露返回NOT_FOUND_IN_SCOPE；字段身份或证据不清返回UNRESOLVED。"
                     "分包未命中不代表整章或全文未披露，程序会在所有分包检查后汇总覆盖。标签和值可跨页，必须引用原始source_id。"
-                    "只按执行计划指向的参考文档角色查找，并遵循该项中文规则。未完整检查所有分包/章节前不能确认未披露。逐条返回执行计划中的全部复核条件；若条件只针对未采用的来源或流程分支，标NOT_APPLICABLE并说明原因；CLEAR必须引用支持条件判断的source_id。不要比较候选以外内容。严格返回JSON："
+                    "只按执行计划指向的参考文档角色查找，并遵循该项中文规则。未完整检查所有分包/章节前不能确认未披露。逐条返回执行计划中的全部复核条件；若条件只针对未采用的来源或未发生的流程分支，标NOT_APPLICABLE，source_ids和metadata_refs均留空并说明原因；CLEAR必须引用支持条件判断的source_id或metadata_refs。不要比较候选以外内容；所有reason须用自然中文业务语言表达，严禁出现coverage、batch_count、source_id、metadata_refs、英文字段路径或英文状态名。严格返回JSON："
                     "{\"items\":[{\"item_id\":\"stable-rule-id\",\"summary_value\":\"\",\"summary_source_ids\":[],\"primary_status\":\"FOUND|CONFIRMED_ABSENT|UNRESOLVED\",\"primary_value\":\"\",\"primary_source_ids\":[],\"applicability_status\":\"CONFIRMED|NOT_REQUIRED|UNRESOLVED\",\"coverage_status\":\"COMPLETE|PARTIAL|UNKNOWN\",\"uncovered_aspects\":[],\"review_condition_assessments\":[{\"condition_index\":0,\"status\":\"CLEAR|NOT_APPLICABLE|REVIEW_REQUIRED|UNRESOLVED\",\"source_ids\":[],\"metadata_refs\":[],\"reason\":\"\"}],\"comparison_status\":\"MATCH|MISMATCH|UNRESOLVED\",\"reason\":\"\"}]}\n"
                     + json.dumps(_shared_context(request_batch), ensure_ascii=False)
                 )
@@ -1660,7 +1698,7 @@ async def compare_product_summary(
             "filename_date_*是从文件名开头规范日期读取的独立候选元数据，不等同PDF内文日期；仅在对应中文规则允许、且与文件内容相容时作为辅助依据，并用metadata_refs引用，不能覆盖PDF内文中的相反日期。version_date_*是预检根据PDF内可确认版本日期或符合PDF日期范围的文件名日期归并出的招募说明书版本日期事实；仅在该项中文规则允许使用版本日期时引用，并用metadata_refs引用。"
             "日期条件须按规则声明的精度比较。若规则允许日期精确到日并规定同日可用，且两日期元数据均精确到日、日期值相同，则该日期条件为CLEAR；不得因缺少日内时分或无法推断先后而标UNRESOLVED。若日期精度不同、值不同或存在相反原文证据，仍按中文规则处理。"
             "适用期间、身份、单位、性质及比较口径均依该项中文规则判断；不确定时保持UNRESOLVED。数字、日期、代码等事实值须由引用原文直接支持。"
-            "逐条评估执行计划review_conditions。复核条件由原文支持时标CLEAR并引用source_id；由输入提供的结构化文档元数据支持时标CLEAR，并在metadata_refs中引用准确的‘文档角色.字段名’；只针对未采用来源或未发生流程分支时标NOT_APPLICABLE，source_ids和metadata_refs均留空并说明原因；条件触发或信息不足时分别标REVIEW_REQUIRED或UNRESOLVED。metadata_refs只能引用当前输入中实际提供的字段。严格返回JSON：{\"items\":[{\"item_id\":\"stable-rule-id\",\"status\":\"FOUND|UNRESOLVED\",\"applicability_status\":\"CONFIRMED|NOT_REQUIRED|UNRESOLVED\",\"comparison_status\":\"MATCH|MISMATCH|UNRESOLVED\",\"review_condition_assessments\":[{\"condition_index\":0,\"status\":\"CLEAR|NOT_APPLICABLE|REVIEW_REQUIRED|UNRESOLVED\",\"source_ids\":[],\"metadata_refs\":[],\"reason\":\"\"}],\"value\":\"\",\"source_ids\":[],\"reason\":\"\"}]}\n"
+            "逐条评估执行计划review_conditions。复核条件由原文支持时标CLEAR并引用source_id；由输入提供的结构化文档元数据支持时标CLEAR，并在metadata_refs中引用准确的‘文档角色.字段名’；只针对未采用来源或未发生流程分支时标NOT_APPLICABLE，source_ids和metadata_refs均留空并说明原因；条件触发或信息不足时分别标REVIEW_REQUIRED或UNRESOLVED。metadata_refs只能引用当前输入中实际提供的字段；所有reason须用自然中文业务语言表达，严禁出现coverage、batch_count、source_id、metadata_refs、英文字段路径或英文状态名。严格返回JSON：{\"items\":[{\"item_id\":\"stable-rule-id\",\"status\":\"FOUND|UNRESOLVED\",\"applicability_status\":\"CONFIRMED|NOT_REQUIRED|UNRESOLVED\",\"comparison_status\":\"MATCH|MISMATCH|UNRESOLVED\",\"review_condition_assessments\":[{\"condition_index\":0,\"status\":\"CLEAR|NOT_APPLICABLE|REVIEW_REQUIRED|UNRESOLVED\",\"source_ids\":[],\"metadata_refs\":[],\"reason\":\"\"}],\"value\":\"\",\"source_ids\":[],\"reason\":\"\"}]}\n"
             + json.dumps(_shared_context(fallback_batch), ensure_ascii=False)
         )
         if trace:
@@ -1773,7 +1811,13 @@ async def compare_product_summary(
         else:
             primary_lookup_status = rule_input["primary_lookup_status"]
         fallback_outcome = fallback_outcomes.get(item_id, {"status": "NOT_TRIGGERED", "reason": "规则声明的来源切换条件尚未满足。"})
-        fallback_lookup = fallback_outcome
+        fallback_lookup = {
+            **fallback_outcome,
+            **({"reason": _humanize_user_reason(fallback_outcome.get("reason"))}
+               if fallback_outcome.get("reason") else {}),
+            **({"comparison_reason": _humanize_user_reason(fallback_outcome.get("comparison_reason"))}
+               if fallback_outcome.get("comparison_reason") else {}),
+        }
         fallback_triggered = fallback_outcome.get("status") != "NOT_TRIGGERED"
         fallback_selected = fallback_outcome.get("status") == "FOUND"
         applicability_status = (fallback_outcome.get("applicability_status")

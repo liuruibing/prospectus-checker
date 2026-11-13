@@ -60,7 +60,49 @@ def test_public_rule_compile_failure_does_not_stage_or_activate_any_plan(monkeyp
         asyncio.run(main.update_rule_file("investment", "common_公共规则.md", payload))
 
     assert raised.value.status_code == 422
-    assert [event[0] for event in events] == ["compile", "compile"]
+    assert events and all(event[0] == "compile" for event in events)
+
+
+def test_public_rule_update_compiles_dependents_concurrently(monkeypatch, tmp_path):
+    current = {"content": "# 当前公共规则\n", "sha256": "a" * 64}
+    scope_dir = tmp_path / "rules" / "investment"
+    scope_dir.mkdir(parents=True)
+    (scope_dir / "common_公共规则.md").write_text("# 当前公共规则\n", encoding="utf-8")
+    for index in range(3):
+        (scope_dir / f"module_{index}.md").write_text(f"# 模块 {index}\n", encoding="utf-8")
+
+    monkeypatch.setenv("PROSPECTUS_MODEL_CONCURRENCY", "3")
+    monkeypatch.setattr(main, "ROOT", tmp_path)
+    monkeypatch.setattr(main, "get_rule", lambda scope, filename: current)
+
+    in_flight = 0
+    peak_in_flight = 0
+
+    async def compile_one(**kwargs):
+        nonlocal in_flight, peak_in_flight
+        in_flight += 1
+        peak_in_flight = max(peak_in_flight, in_flight)
+        await asyncio.sleep(0.02)
+        in_flight -= 1
+        filename = kwargs["filename"]
+        return {
+            "execution_plan": {"rule_identity": filename},
+            "public_rules_sha256": "b" * 64,
+            "protocol_version": "test",
+            "compiled_at": f"time-{filename}",
+        }
+
+    monkeypatch.setattr(main, "compile_rule", compile_one)
+    monkeypatch.setattr(main, "persist_compiled_rule", lambda scope, filename, plan: None)
+    monkeypatch.setattr(main, "save_rule", lambda scope, filename, content, expected: {
+        "scope": scope, "filename": filename, "content": content, "sha256": "c" * 64,
+    })
+
+    payload = main.RuleUpdatePayload(content="# 新公共规则\n", expected_sha256="a" * 64)
+    saved = asyncio.run(main.update_rule_file("investment", "common_公共规则.md", payload))
+
+    assert peak_in_flight == 3
+    assert saved["execution_version"]["compiled_rules"] == 3
 
 
 def test_module_rule_update_compiles_prose_before_activating_matching_source(monkeypatch, tmp_path):
