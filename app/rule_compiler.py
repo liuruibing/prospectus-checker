@@ -18,17 +18,18 @@ from app.rule_plan import ExecutionPlanError, validate_execution_plan
 
 
 PROTOCOL_VERSION = "zh-rule-plan-v3"
-PROMPT_VERSION = "rule-interpretation-51"
+PROMPT_VERSION = "rule-interpretation-53"
 SUPPORTED_PROMPT_VERSIONS = {
     "rule-interpretation-27", "rule-interpretation-28", "rule-interpretation-29",
     "rule-interpretation-30", "rule-interpretation-31", "rule-interpretation-32",
     "rule-interpretation-33", "rule-interpretation-35", "rule-interpretation-36",
     "rule-interpretation-37", "rule-interpretation-38", "rule-interpretation-39",
-    "rule-interpretation-40", "rule-interpretation-41", "rule-interpretation-42", "rule-interpretation-43", "rule-interpretation-44", "rule-interpretation-45", "rule-interpretation-46", "rule-interpretation-47", "rule-interpretation-48", "rule-interpretation-49", "rule-interpretation-50", PROMPT_VERSION,
+    "rule-interpretation-40", "rule-interpretation-41", "rule-interpretation-42", "rule-interpretation-43", "rule-interpretation-44", "rule-interpretation-45", "rule-interpretation-46", "rule-interpretation-47", "rule-interpretation-48", "rule-interpretation-49", "rule-interpretation-50", "rule-interpretation-51", "rule-interpretation-52", PROMPT_VERSION,
 }
 ROOT = Path(__file__).resolve().parents[1]
 COMPILED_ROOT = ROOT / "var" / "compiled_rules"
 MAX_OUTPUT_CHARS = 80_000
+RULE_SCOPES = {"investment", "product_summary", "historical_performance"}
 
 
 class RuleCompilationError(ValueError):
@@ -40,7 +41,7 @@ def _sha(value: str) -> str:
 
 
 def _safe_rule_path(scope: str, filename: str) -> Path:
-    if scope not in {"investment", "product_summary"} or Path(filename).name != filename:
+    if scope not in RULE_SCOPES or Path(filename).name != filename:
         raise RuleCompilationError("规则身份无效")
     return ROOT / "rules" / scope / filename
 
@@ -52,6 +53,8 @@ def _compiled_path(scope: str, filename: str, source_hash: str) -> Path:
 
 
 def _public_rule_hash(scope: str, overrides: dict[str, str] | None = None) -> str:
+    if scope not in RULE_SCOPES:
+        raise RuleCompilationError("不支持的规则类别")
     scope_dir = ROOT / "rules" / scope
     files = sorted(scope_dir.glob("common_*.md")) if scope_dir.exists() else []
     digest = hashlib.sha256()
@@ -106,14 +109,18 @@ def load_compiled_execution_plan(path: Path, source_content: str | None = None) 
     return _validate_plan(scope, path.name, payload["execution_plan"], expected_identity=expected_identity)
 
 
-def load_investment_rule_definitions(rule_dir: Path | None = None) -> tuple[dict[str, str], dict[str, dict[str, Any]], list[dict[str, Any]]]:
-    """Load every active investment rule from the rule directory.
+def load_investment_rule_definitions(
+    rule_dir: Path | None = None, *, scope: str = "investment",
+) -> tuple[dict[str, str], dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """Load every active rule from one workflow rule directory.
 
     The file set is the registry. Runtime field roles and display labels come
     from the compiled plan for each exact Markdown source hash; this function
     contains no chapter IDs, titles, or field lists.
     """
-    directory = rule_dir or ROOT / "rules" / "investment"
+    if scope not in RULE_SCOPES:
+        raise RuleCompilationError(f"不支持的规则类别：{scope}")
+    directory = rule_dir or ROOT / "rules" / scope
     texts: dict[str, str] = {}
     plans: dict[str, dict[str, Any]] = {}
     definitions: list[dict[str, Any]] = []
@@ -121,11 +128,11 @@ def load_investment_rule_definitions(rule_dir: Path | None = None) -> tuple[dict
         if path.name.startswith("common_"):
             continue
         source = path.read_text(encoding="utf-8")
-        identity = _stable_rule_identity("investment", path.name)
+        identity = _stable_rule_identity(scope, path.name)
         plan = load_compiled_execution_plan(path, source)
         if plan is None:
             raise RuleCompilationError(f"规则“{path.name}”尚未生成有效执行计划，不能用于新任务。")
-        if plan["rule_identity"] != identity:
+        if plan["rule_identity"] != identity or plan["rule_scope"] != scope:
             raise RuleCompilationError(f"规则“{path.name}”的执行计划身份不匹配。")
         fields = {
             item["field"]: item["label"]
@@ -156,7 +163,7 @@ def read_rule_source(path: Path) -> str:
 
 def capture_rule_set(scope: str) -> dict[str, Any]:
     """Freeze rule source/execution fingerprints for one task."""
-    if scope not in {"investment", "product_summary"}:
+    if scope not in RULE_SCOPES:
         raise RuleCompilationError("不支持的规则类别")
     directory = ROOT / "rules" / scope
     files: dict[str, dict[str, str]] = {}
@@ -195,7 +202,7 @@ def _stable_rule_identity(scope: str, filename: str) -> str:
     Chinese suffixes are display labels only. The ASCII snake-case prefix is
     the stable key and remains independent from the editable Markdown title.
     """
-    if scope not in {"investment", "product_summary"} or Path(filename).name != filename:
+    if scope not in RULE_SCOPES or Path(filename).name != filename:
         raise RuleCompilationError(f"规则“{filename}”的稳定身份无效。")
     stem = Path(filename).stem
     match = re.match(r"^([a-z][a-z0-9_]*?)(?=_[\u3400-\u9fff]|$)", stem)
@@ -204,7 +211,7 @@ def _stable_rule_identity(scope: str, filename: str) -> str:
     key = match.group(1).rstrip("_")
     if not key:
         raise RuleCompilationError(f"规则“{filename}”的稳定身份为空。")
-    return f"investment.{key}" if scope == "investment" else key
+    return f"investment.{key}" if scope == "investment" else key if scope == "product_summary" else f"performance.{key}"
 
 
 def _validate_plan(
@@ -269,23 +276,29 @@ async def compile_rule(
     )
     user = (
         f"规则身份（仅用于稳定关联）：{json.dumps(identity, ensure_ascii=False)}\n\n"
-        "执行器上下文数据契约：投资组合文档的已核验元数据位于 document.document_info；产品资料概要流程的文档元数据位于 document.metadata。概要流程 metadata 可用字段为 fund_name、fund_code、fund_codes、compiled_date、sent_date、period_end、date_interval、date_quote、date_precision、filename_date_interval、filename_date_quote、filename_date_precision、version_date、version_date_interval、version_date_quote、version_date_source、version_date_precision。目标概要编制日读取目标文档 document.metadata.compiled_date；定期报告送出日读取 periodic_report 对应文档的 document.metadata.sent_date；招募说明书版本日期读取 prospectus 对应文档的预检归并字段 document.metadata.version_date；该字段仅在 PDF 内有明确日级日期或文件名日期落入 PDF 日期范围时提供。缺失时不得把月份区间起点当作准确版本日。身份事实读取双方 document.metadata.fund_name / fund_code。上下文检查只比较 document 级事实，不能引用 module 路径；项目指标字段应放在 comparison.fields，不得放进 context_checks。来源角色专属条件必须放在 comparison.context_checks_by_reference_role，不得放入适用于所有来源的 context_checks。\n\n"
+        "执行器上下文数据契约：投资组合文档的已核验元数据位于 document.document_info；产品资料概要流程的文档元数据位于 document.metadata。投资组合流程的已抽取表格数据契约：行身份字段名如 industry_code、industry_name、security_code；表格行级公共范围键名固定为 market_scope（市场范围）、investment_scope（投资类别/投资范围，如指数投资或积极投资），不得改名为 investment_category 或 asset_class；disclosure_scope 与 limit 位于模块顶层 scope（用于表达全量或前N名披露口径），不得放入 row_matching.scope_fields 或 required_scope_fields；比较字段键名固定为：金额 amount、持有数量 holding_quantity、公允价值 fair_value、占基金总资产比例 total_assets_percentage、占基金资产净值比例 nav_ratio、证券名称 security_name（仅按当前中文规则实际要求声明对应项）。概要流程 metadata 可用字段为 fund_name、fund_code、fund_codes、compiled_date、sent_date、period_end、date_interval、date_quote、date_precision、filename_date_interval、filename_date_quote、filename_date_precision、version_date、version_date_interval、version_date_quote、version_date_source、version_date_precision。目标概要编制日读取目标文档 document.metadata.compiled_date；定期报告送出日读取 periodic_report 对应文档的 document.metadata.sent_date；招募说明书版本日期读取 prospectus 对应文档的预检归并字段 document.metadata.version_date；该字段仅在 PDF 内有明确日级日期或文件名日期落入 PDF 日期范围时提供。缺失时不得把月份区间起点当作准确版本日。身份事实读取双方 document.metadata.fund_name / fund_code。上下文检查只比较 document 级事实，不能引用 module 路径；项目指标字段应放在 comparison.fields，不得放进 context_checks。来源角色专属条件必须放在 comparison.context_checks_by_reference_role，不得放入适用于所有来源的 context_checks。\n\n"
         f"管理人员维护的中文规则：\n{source_content}\n\n"
         f"适用的公共规则（若存在，须一并遵守）：\n{common_rules or '无独立公共规则正文'}\n\n"
         "\n请仅根据以上中文规则和适用公共规则生成 execution_plan，严格遵守以下通用结构："
         f"protocol_version=2；rule_identity 必须逐字等于 {stable_rule_id!r}，只能取规则身份对象中的 stable_rule_id，不能使用文件名或展示标题；"
         "rule_scope 为当前工作流；"
         "display_title 为规则中文标题；target_role 和 reference_roles 只使用 prospectus、periodic_report、product_summary；"
+        "reference_roles 必须包含 source_selection.primary_role 的同一个值。报告子类型不是文档角色，例如年报和各季报均属于 periodic_report。"
+        "同一角色内的子类型优先顺序不生成备用角色；仅有一个参考角色时，primary_role 必须等于该角色且 fallbacks 为空数组。"
+        "例如用不同类型的定期报告核对招募说明书时，target_role 是 prospectus，reference_roles 是 [\"periodic_report\"]，primary_role 是 periodic_report。"
         "business_group 是从中文规则归纳出的展示与批处理分类，不参与业务判断；若当前规则或适用的公共规则（例如“业务分类”清单）已显式将该指标名称或规则标题归入某个分类，必须无条件严格选用该显式指定的分类名称，严禁按常规金融语义或习惯擅自改归其他分类；"
-        "source_selection 含 primary_role 和 fallbacks；每个备用 role 在 fallbacks 中只能出现一次。备用来源对象只允许 role、when、when_any、candidate_review_when_any 四项。when 是必须同时满足的自动切换条件列表（AND）；when_any 是可任选一组满足的自动切换条件列表（组间 OR，组内 AND）。如果中文规则表达‘满足任一条件即可自动切换’，必须用 when_any 表达，不能重复写同一 role。若候选必须先从备用来源原文核实其身份、合同关系、费率性质、生效日期、目标时点适用性或口径，则使用 candidate_review_when_any 打开审核，不得把同一条件组同时放入 when/when_any；候选审核条件与自动切换条件相同会被拒绝。candidate_review_when_any 只表示主来源状态满足时可以检查候选，不表示主来源未披露，也不直接选用候选；审核后，若中文规则允许且候选证据满足规则声明的身份、时点、适用范围和口径条件，执行器可以选用该候选。不得把‘主来源状态未知，不能声称已确认未披露’解释成‘不得使用通过独立审核的候选’，也不得把该流程提醒重复编译为 review_conditions 阻断候选选择。若中文规则明确允许在主来源状态未知时独立审查备用来源，则此分支只检查备用来源是否满足其自身适用性条件；不得要求先找到主来源证据、确认主来源已披露或确认其未披露。‘主来源未知时不得声称已确认未披露’属于结果表述约束，由执行器保留主来源状态并如实展示，不是备用候选的业务适用性条件，不能生成对应 review_conditions。candidate_review_when_any 只用于中文规则明确允许由备用来源自身证据建立适用性的情形。它只能包含候选检索前已能取得的条件；若中文规则允许以备用来源自身条款证明在目标文件时点仍适用，即使主来源状态为 UNRESOLVED，也必须把 primary.status equals UNRESOLVED 作为独立候选审核组加入 candidate_review_when_any。此条件只打开审核，不表示主来源未披露，也不能单独授权选择备用来源。候选审核条件与自动来源切换条件不得重复；一个备用来源可以使用自动切换条件，或使用候选审核条件，不能重复同一触发组。条件使用通用事实路径 primary.status、primary.coverage、primary.applicability、scope.fund_identity、scope.period、scope.fact_nature、scope.unit、scope.effective_time，通用 operator equals 或 matches_target，以及非空 value。primary.status 可使用 FOUND、CONFIRMED_ABSENT、UNRESOLVED、NOT_APPLICABLE；primary.coverage 可使用 COMPLETE、PARTIAL、NOT_FOUND、UNKNOWN；primary.applicability 可使用 CONFIRMED、NOT_REQUIRED、UNRESOLVED。确认主来源明确未披露时，使用 primary.status equals CONFIRMED_ABSENT；不能用空值或含糊的“已确认”条件。目标侧事实比较必须用 matches_target，不得把 target.scope.* 写成 equals 的文字值。candidate_review_when_any 的触发只打开适用性审核，不视为主来源未披露；不支持的候选适用性应拒绝编译，不能默默改成普通来源切换。没有回退来源时 fallbacks 为空数组。来源顺序和触发条件必须来自中文原文，不能从旧参数自动继承；"
-        "search_intent 含 target_description、preferred_sections（字符串数组）、preferred_sections_by_role（按文档角色提供章节语义线索的对象）、include_continuations（布尔值）；"
+        "source_selection 含 primary_role、fallbacks 和 reference_document_filters；reference_document_filters 是针对参考文档事实的通用筛选列表，每项含 role、path（document. 开头）、operation、value、required，operation 只允许 equals、not_equals、contains、ends_with。每个备用 role 在 fallbacks 中只能出现一次。备用来源对象只允许 role、when、when_any、candidate_review_when_any 四项。when 是必须同时满足的自动切换条件列表（AND）；when_any 是可任选一组满足的自动切换条件列表（组间 OR，组内 AND）。如果中文规则表达‘满足任一条件即可自动切换’，必须用 when_any 表达，不能重复写同一 role。若候选必须先从备用来源原文核实其身份、合同关系、费率性质、生效日期、目标时点适用性或口径，则使用 candidate_review_when_any 打开审核，不得把同一条件组同时放入 when/when_any；候选审核条件与自动切换条件相同会被拒绝。candidate_review_when_any 只表示主来源状态满足时可以检查候选，不表示主来源未披露，也不直接选用候选；审核后，若中文规则允许且候选证据满足规则声明的身份、时点、适用范围和口径条件，执行器可以选用该候选。不得把‘主来源状态未知，不能声称已确认未披露’解释成‘不得使用通过独立审核的候选’，也不得把该流程提醒重复编译为 review_conditions 阻断候选选择。若中文规则明确允许在主来源状态未知时独立审查备用来源，则此分支只检查备用来源是否满足其自身适用性条件；不得要求先找到主来源证据、确认主来源已披露或确认其未披露。‘主来源未知时不得声称已确认未披露’属于结果表述约束，由执行器保留主来源状态并如实展示，不是备用候选的业务适用性条件，不能生成对应 review_conditions。candidate_review_when_any 只用于中文规则明确允许由备用来源自身证据建立适用性的情形。它只能包含候选检索前已能取得的条件；若中文规则允许以备用来源自身条款证明在目标文件时点仍适用，即使主来源状态为 UNRESOLVED，也必须把 primary.status equals UNRESOLVED 作为独立候选审核组加入 candidate_review_when_any。此条件只打开审核，不表示主来源未披露，也不能单独授权选择备用来源。候选审核条件与自动来源切换条件不得重复；一个备用来源可以使用自动切换条件，或使用候选审核条件，不能重复同一触发组。条件使用通用事实路径 primary.status、primary.coverage、primary.applicability、scope.fund_identity、scope.period、scope.fact_nature、scope.unit、scope.effective_time，通用 operator equals 或 matches_target，以及非空 value。primary.status 可使用 FOUND、CONFIRMED_ABSENT、UNRESOLVED、NOT_APPLICABLE；primary.coverage 可使用 COMPLETE、PARTIAL、NOT_FOUND、UNKNOWN；primary.applicability 可使用 CONFIRMED、NOT_REQUIRED、UNRESOLVED。确认主来源明确未披露时，使用 primary.status equals CONFIRMED_ABSENT；不能用空值或含糊的“已确认”条件。目标侧事实比较必须用 matches_target，不得把 target.scope.* 写成 equals 的文字值。candidate_review_when_any 的触发只打开适用性审核，不视为主来源未披露；不支持的候选适用性应拒绝编译，不能默默改成普通来源切换。没有回退来源时 fallbacks 为空数组。来源顺序和触发条件必须来自中文原文，不能从旧参数自动继承；"
+        "search_intent 含 target_description、preferred_sections（字符串数组）、preferred_sections_by_role（按文档角色提供章节语义线索的对象）、include_continuations（布尔值，默认 true 以保留跨页续接章节与表格）；"
         "row_matching 只描述逐行表格事实的行身份、层级和逐行范围；它不承载文档来源适用条件、来源先后或目标日期判断。纯段落/单一事实指标没有逐行身份与范围字段时，identity_fields、scope_fields 和其他无关行匹配字段应为空数组；绝不能把 source_selection 条件路径（例如 scope.fund_identity、scope.effective_time）写入 row_matching.scope_fields，这些条件仅能按中文规则放进 source_selection 或 comparison。row_matching 是对象，含 identity_description、identity_fields、identity_prefixes_to_ignore、scope_fields、required_scope_fields、hierarchy_fields、fallback_identity_fields、identity_headers、"
         "identity_equivalence_groups；identity_equivalence_groups 是由中文规则中明确陈述的同义项目/等价行名归纳出的列表，每项含 canonical_identity 与 equivalent_labels。"
         "只记录中文规则明确写出的等价关系，不能依据金额相同、常识猜测或文件名推断；没有明确等价描述时返回空列表。canonical_identity 与 equivalent_labels 代表同一个项目身份，运行时仍须验证唯一性及范围/层级兼容。"
         "target_population、reference_superset_allowed、require_complete_source_for_missing；这些字段必须全部嵌套在 row_matching 内。"
         "表格事实的通用输出结构为 module.scope 与 module.rows；每个 row 使用稳定的 row_key、原文 label、可选 parent_key，"
         "并可包含执行计划声明的身份字段、范围字段、辅助事实和 fields（仅本规则实际比较值）。"
-        "identity_fields 及 fallback_identity_fields 必须引用该规则声明且输入结构中实际可提取的身份字段；优先使用稳定 row_key，"
+        "identity_fields 及 fallback_identity_fields 必须引用该规则声明且输入结构中实际可提取的身份字段。规则以原文行名作为身份时，使用已有通用字段 label。"
+        "row_key 仅在规则允许用稳定的业务标识匹配时作为身份字段；"
+        "段落事实规则要求按事项、主体及范围生成稳定事实键时，逐行身份必须采用 row_key，"
+        "原文引文仅用于证据，不能代替稳定事实键，也不能省略逐行身份。"
         "其他身份字段必须来自该规则的业务说明及原文证据，不预设特定章节或行业字段。"
         "identity_prefixes_to_ignore 是中文规则明确说明不属于名称身份的行首提示词列表；仅在比较身份时移除，原始行名和引用保持不变；没有明确提示词规则时为空数组。"
         "禁止生成与规则无关的字段。scope_fields 只能引用该规则明确需要区分且可从逐行原文确认的范围字段；required_scope_fields 是其中必须有双方原文证据才能比较的子集，只在中文规则明确说范围必须确认时声明；字段缺失或未知时该行待复核，不能当作双方同范围。"
@@ -299,7 +312,10 @@ async def compile_rule(
         "module.scope 中该规则声明的范围事实；投资组合流程的 document.document_info 仅包含 fund_name、fund_code、disclosure_date、period_end 四个已核验字符串字段；"
         "基金身份、基金代码、披露期间和报告披露日期属于文档级事实，必须从 document.document_info 读取，不得从 module.scope 推断；module.scope 仅用于该模块本身明确披露的适用范围。"
         "row_matching.scope_fields 只能引用逐行输出中实际存在的范围字段，不能把文档级身份或期间放入逐行字段；只声明本规则需要且输入结构确有的上下文，不得发明字段）、"
-        "identity_headers 是身份字段到 PDF 表格身份表头语义列表的映射，仅覆盖本规则声明的身份字段；"
+        "identity_headers 是身份字段到独立 PDF 身份列实际表头的映射。来自段落或表格分组标题的身份不得编造列映射；"
+        "规则明确列出的表头别名须完整保留，禁止使用其他字段表头中的歧义片段替代身份列。"
+        "scope_equivalence_groups 是可选对象，键是 scope_fields 中声明的逐行范围字段，值是等价组数组；"
+        "每组使用 canonical_identity 和 equivalent_labels，只记录规则明确列为同一范围的文字，不能合并不同范围或用等价词代替缺失证据。"
         "comparison.fields 是逐项比较值列表，至少一项，每项含 field、label、operation、required、source_headers；只列本规则要求逐行或逐事实比较的实际字段值。明确未持有、无数据、范围标签等披露状态放入相应通用披露/范围结构，不得制造 holding_status、disclosure_status 等虚构字段塞入逐行比较字段；"
         "表格中的合计、小计、净额等汇总行通常仍是具有原文行名和单元格的普通数据行，不得仅因其行名代表汇总就新增 summary/total 类比较字段；只有中文规则明确要求把某个汇总值作为独立事实核对时，才单独声明对应字段。"
         "source_headers 是该字段在 PDF 表格中可能出现的表头原文或语义等价表达数组，不适用表格时为空数组；"
@@ -307,13 +323,14 @@ async def compile_rule(
         "身份字段不能重复放进 fields）；"
         "evidence_requirements 与 review_conditions 均为字符串数组。review_conditions 只保留不能由 comparison.context_checks 或 comparison.context_check_groups 完整表达的语义条件；若某条件已被同一计划中的结构化上下文检查完整表达，则由该结构化检查作为唯一执行依据，不得再把同一条件重复交给后续模型自由判断。若结构化检查只覆盖条件的一部分，review_conditions 仅保留未覆盖的语义部分。source_selection 已表达的来源路由触发、候选审核分支及其对‘未确认未披露’的限定，不得重复放入 review_conditions 阻断所选来源；‘不得把未解决主来源表述为已确认未披露’属于结果准确性约束，不是来源适用性复核条件，应由保留主来源状态的通用输出处理。review_conditions 应只说明被选来源及目标事实仍须满足的业务条件。不得因去重而丢弃中文规则要求的条件，所有条件仍须在执行计划中可追溯。字段名使用事实结构中的通用字段角色，不能填章节 ID、文件名、Excel 坐标、代码或表达式。"
         "来源条件对象的精确结构为 {\"fact\": \"primary.status\", \"operator\": \"equals\", \"value\": \"CONFIRMED_ABSENT\"}；fact 也可写作 path，系统会规范成 fact。matches_target 的 value 只能是 target.scope.fund_identity 或 target.scope.period。when_any 和 candidate_review_when_any 的精确结构均为 [[条件对象, ...], [条件对象, ...]]。"
-        "row_matching.target_population 只能是英文枚举 target_document 或 both_documents，绝不能填业务描述；"
+        "row_matching.target_population 只能是 target_document、both_documents 或 common_rows。仅当规则明确只核对双方共有且可定位的事实时，使用 common_rows；"
         "target_document 表示只以目标文件披露项目为核对范围，both_documents 表示双方披露项目都纳入核对。"
         "参考来源披露比目标文件多出的项目是否忽略，单独由 reference_superset_allowed 布尔值表达；来源结构完整性由 require_complete_source_for_missing 布尔值表达。"
         "row_matching 必须遵循形状：{\"identity_description\":\"中文说明\",\"identity_fields\":[],\"identity_prefixes_to_ignore\":[],\"scope_fields\":[],\"required_scope_fields\":[],\"hierarchy_fields\":[],\"fallback_identity_fields\":[],\"identity_headers\":{},\"identity_equivalence_groups\":[],\"target_population\":\"target_document\",\"reference_superset_allowed\":false,\"require_complete_source_for_missing\":true}。"
         "公共规则与当前指标规则同等有效。只有当公共规则明确要求以文档级基金身份、报告期间或来源时点作为前置门禁时，才转成 context_checks 或 context_check_groups，不能只写进 scope_conditions。若公共规则明确声明“各指标逐项独立比较、不得以文档级名称或代码预检差异作为阻断各独立指标的前置门禁，也不得生成文档级基金名称或基金代码前置上下文校验”，则严禁在 comparison.context_checks、context_checks_by_reference_role 或 context_check_groups 中生成基于 document.metadata.fund_name 或 document.metadata.fund_code 的身份校验（即使单条规则写有“结合基金身份”也不得违反公共规则加上此类文档级前置拦截）；客观来源时点条件（如送出日/版本日不晚于编制日）仍照常编译为上下文日期检查。若公共规则允许用多个身份事实交叉确认，必须用一个 context_check_groups 组表达该身份政策，并按 all_available_match 处理共同披露的事实；身份名称或代码不能作为 required=true 的独立 context_check，否则缺少单一身份事实会错误阻断任务。也不能把同一身份字段同时放进身份组和必需检查。若要求来源在目标编制/披露时点前可用，应编码来源日期不晚于目标日期，且选对日期方向。不同日期概念不得互设为相等。context_checks 仅在中文规则明确要求时建立，不得从规则之外发明条件。若中文规则允许以多个身份事实交叉确认，且缺少其中某项不应单独阻断比较，应使用 context_check_groups：mode=all_available_match 表示双方均有值的身份事实必须全部匹配，缺失的单项跳过，但匹配数量必须达到 minimum_matches；任一已提供身份事实冲突仍待复核。此组应来自中文规则，不可自行假设身份替代关系。产品概要编制日、文件披露日、定期报告期末是不同概念，不能互设为必须相等。"
         "生成后自行逐项复核：来源切换每组条件不得重复；不得把搜索失败、引用失败或状态不确定解释为已确认未披露；比较字段必须是规则实际要求核对的披露值，不得加入用于描述‘未持有/无披露/待复核’的虚构字段；通用字段映射不清楚时用 review_conditions 说明缺口，不得猜测。"
         "比较字段、来源条件和上下文检查都只能来自中文规则正文及公共规则，禁止从模型记忆、旧执行参数、文件名、指标 ID 或相邻规则推断。若规则没有声明两侧必须比较的事实，就不能创建相应 context_check。"
+        "如果规则明确限定最近若干个已结束自然年，将年数写入 comparison.calendar_year_window，取正整数；其他规则省略此字段。"
         "comparison 必须遵循形状：{\"identity_description\":\"中文说明\",\"scope_conditions\":[],\"context_checks\":[],\"context_check_groups\":[{\"label\":\"身份事实\",\"mode\":\"all_available_match\",\"minimum_matches\":1,\"checks\":[{\"label\":\"基金名称\",\"target_path\":\"document.document_info.fund_name\",\"reference_path\":\"document.document_info.fund_name\",\"operation\":\"text\"}]}],\"fields\":[{\"field\":\"通用事实字段名\",\"label\":\"中文字段名\",\"operation\":\"semantic\",\"required\":true,\"source_headers\":[]}]}。无此需求时 context_check_groups 使用空数组。"
         "JSON 外层结构必须是 {\"execution_plan\": {所有顶层身份字段, \"search_intent\": {...}, \"source_selection\": {...}, \"row_matching\": {前述行匹配字段}, \"comparison\": {前述比较字段}, \"evidence_requirements\": [...], \"review_conditions\": [...]}}。"
         "target_population、reference_superset_allowed、require_complete_source_for_missing 只能放在 row_matching 内；fields 只能放在 comparison.fields 内。"

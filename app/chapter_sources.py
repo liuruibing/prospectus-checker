@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-from app.domain import normalize_numeric, normalize_text
+from app.domain import normalize_numeric, normalize_text, quoted_dates
 from app.source_evidence import evidence_source
 
 
@@ -192,7 +192,8 @@ def source_catalogue(context: dict, rule: dict, tables: dict, header_maps: dict,
                     if not _source_value_supported(raw, operation):
                         break
                     header = " ".join(str(row[column] or "") for row in table["matrix"][:3] if column < len(row))
-                    unit = table.get("column_units", {}).get(rule["rule_id"], {}).get(field, column_unit(field, header))
+                    declared_unit = table.get("column_units", {}).get(rule["rule_id"], {}).get(field)
+                    unit = "%" if raw.endswith(("%", "％")) else declared_unit or column_unit(field, header)
                     values[field] = {"raw_text": raw, "unit": unit, "page": page,
                                      "quote": " ".join(str(cell).strip() for cell in cells if cell is not None),
                                      "source_ref": {"table": table_index, "row": index, "mapping": row_mapping}}
@@ -417,8 +418,9 @@ def source_gaps(context: dict, records: dict[str, dict], rule: dict) -> list[str
     text_markdown = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", markdown)
     for line in text_markdown.splitlines():
         stripped = re.sub(r"第\s*\d+\s*页(?:\s*共\s*\d+\s*页)?", "", line).strip()
-        if (not stripped or "|" in stripped or "<tr" in stripped.lower()
-                or re.match(r"^#{1,6}\s", stripped) or stripped.startswith("<!--")):
+        if (not stripped or stripped.isdecimal() or "|" in stripped or "<tr" in stripped.lower()
+                or re.match(r"^#{1,6}\s", stripped) or stripped.startswith("<!--")
+                or re.match(r"^(?:注(?:释)?|说明)\s*[：:]", stripped)):
             continue
         raw_values = re.findall(decimal, stripped)
         values = [normalize_numeric(value) for value in raw_values]
@@ -433,6 +435,114 @@ def source_gaps(context: dict, records: dict[str, dict], rule: dict) -> list[str
             missing.append(stripped)
 
     return missing
+
+
+def can_use_table_fast_path(records: dict[str, dict], rule: dict) -> bool:
+    """Use single-call table classification for large flat security holding tables."""
+    if len(records) <= 40:
+        return False
+    row_matching = rule.get("row_matching") or {}
+    if row_matching.get("hierarchy_fields"):
+        return False
+    identity_fields = set(row_matching.get("identity_fields", []))
+    if not ({"security_code", "security_name"} & identity_fields):
+        return False
+    for record in records.values():
+        mapping = record.get("mapping") or {}
+        cells = record.get("cells") or []
+        code_idx = mapping.get("security_code")
+        name_idx = mapping.get("security_name")
+        code_val = cells[code_idx].strip() if isinstance(code_idx, int) and 0 <= code_idx < len(cells) else ""
+        name_val = cells[name_idx].strip() if isinstance(name_idx, int) and 0 <= name_idx < len(cells) else ""
+        if not (code_val or name_val):
+            return False
+    return True
+
+
+def table_classification_groups(
+    context: dict, records: dict[str, dict], tables: dict,
+) -> list[dict[str, Any]]:
+    """Group large flat security records by logical heading/header for table-level classification."""
+    headings = [line.strip() for line in context.get("section_markdown", "").splitlines()
+                if re.match(r"^#{1,6}\s+\S", line)]
+    markdown_tables = _markdown_table_heading_contexts(context.get("section_markdown", ""))
+    by_phys: dict[tuple[int, int], list[tuple[str, dict]]] = {}
+    for source_id, record in records.items():
+        source_ref = record.get("source_ref") or {}
+        by_phys.setdefault((int(record.get("page", 0)), int(source_ref.get("table", 0))), []).append((source_id, record))
+
+    logical: dict[tuple[tuple[str, ...], str], dict[str, Any]] = {}
+    for (page, table_index), entries in sorted(by_phys.items()):
+        entries.sort(key=lambda item: int((item[1].get("source_ref") or {}).get("row", 0)))
+        page_tables = tables.get(page, [])
+        table = page_tables[table_index] if table_index < len(page_tables) else {}
+        header_rows = table.get("matrix", [])[:2]
+        table_headings = _table_headings_for_rows(entries, markdown_tables, headings)
+        sig = (tuple(table_headings), json.dumps(header_rows, ensure_ascii=False))
+        group = logical.get(sig)
+        if group is None:
+            group = {
+                "table_id": f"tbl_{len(logical) + 1}",
+                "section_headings": table_headings,
+                "headers": header_rows,
+                "pages": [page],
+                "row_count": 0,
+                "sample_rows": [record["cells"] for _, record in entries[:2]],
+                "source_ids": [],
+            }
+            logical[sig] = group
+        elif page not in group["pages"]:
+            group["pages"].append(page)
+        group["row_count"] += len(entries)
+        group["source_ids"].extend(sid for sid, _ in entries)
+    return list(logical.values())
+
+
+def expand_table_classifications(
+    classified: dict[str, Any], groups: list[dict[str, Any]],
+    records: dict[str, dict], rule: dict,
+) -> dict[str, Any]:
+    """Expand table-level classifications into per-record rows ready for bind_sources()."""
+    by_id = {
+        str(item.get("table_id")): item
+        for item in (classified.get("table_classifications") or [])
+        if isinstance(item, dict) and item.get("table_id")
+    }
+    if len(by_id) != len(groups) or any(g["table_id"] not in by_id for g in groups):
+        raise ValueError("AI_TABLE_CLASSIFICATION: table_classifications did not cover all logical tables")
+    top_scope = classified.get("scope") if isinstance(classified.get("scope"), dict) else {}
+    scope_fields = list((rule.get("row_matching") or {}).get("scope_fields", []))
+    rows = []
+    for group in groups:
+        tbl_meta = by_id[group["table_id"]]
+        for source_id in group["source_ids"]:
+            record = records[source_id]
+            mapping = record.get("mapping") or {}
+            cells = record.get("cells") or []
+            code_idx = mapping.get("security_code")
+            name_idx = mapping.get("security_name")
+            code_val = cells[code_idx].strip() if isinstance(code_idx, int) and 0 <= code_idx < len(cells) else ""
+            name_val = cells[name_idx].strip() if isinstance(name_idx, int) and 0 <= name_idx < len(cells) else ""
+            row = {
+                "source_id": source_id,
+                "row_key": code_val or name_val,
+                "row_label": name_val or code_val,
+                "parent_key": None,
+            }
+            for sf in scope_fields:
+                val = tbl_meta.get(sf)
+                if val is None:
+                    val = top_scope.get(sf)
+                row[sf] = val
+            rows.append(row)
+    return {
+        "rule_id": rule["rule_id"],
+        "found": bool(classified.get("found", True)),
+        "applicability": classified.get("applicability"),
+        "scope": top_scope,
+        "disclosures": classified.get("disclosures") or [],
+        "rows": rows,
+    }
 
 
 def bind_sources(module: dict, records: dict[str, dict], rule: dict) -> dict:
@@ -468,6 +578,17 @@ def bind_sources(module: dict, records: dict[str, dict], rule: dict) -> dict:
                 continue
             if isinstance(column, int) and 0 <= column < len(source["cells"]):
                 row[key] = source["cells"][column] or None
+        period_fields = {"period_year", "period_start", "period_end"}
+        if period_fields.issubset(declared_identity_fields):
+            label = normalize_text(row.get("row_label"))
+            dates = quoted_dates(row.get("row_label")) if label and any(
+                label == normalize_text(cell) for cell in source["cells"]
+            ) else ()
+            if len(dates) == 2 and dates[0] <= dates[1]:
+                row.update(period_year=dates[1][:4], period_start=dates[0], period_end=dates[1])
+            else:
+                for key in period_fields:
+                    row.pop(key, None)
         rows.append(row)
     missing = sorted(set(records) - used)
     if missing:

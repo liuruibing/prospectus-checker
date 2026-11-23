@@ -31,7 +31,13 @@ def _routing_plans():
         rule["rule_id"]: {
             "rule_identity": rule["rule_id"],
             "display_title": rule["title"],
-            "search_intent": {"target_description": rule["title"], "preferred_sections": aliases[rule["rule_id"]]},
+            "search_intent": {
+                "target_description": rule["title"],
+                "preferred_sections": aliases.get(
+                    rule["rule_id"],
+                    _EXECUTION_PLANS[rule["rule_id"]]["search_intent"]["preferred_sections"],
+                ),
+            },
             "row_matching": {"identity_headers": {}},
             "comparison": {"fields": []},
         }
@@ -333,6 +339,8 @@ def test_empty_chapter_selection_does_not_borrow_next_chapters_table_score():
 def test_chapter_failure_cancels_pending_requests_before_returning(monkeypatch):
     state = {'cancelled': 0, 'pending': 0}
     failed_rule = MODULE_RULES[-1]['rule_id']
+    concurrency = 4
+    monkeypatch.setenv('PROSPECTUS_SOURCE_BATCH_CONCURRENCY', str(concurrency))
     monkeypatch.setattr(extraction, 'MAX_ANALYSIS_CHARS', 10000)
     monkeypatch.setattr(extraction, 'source_catalogue', lambda *args: [])
     monkeypatch.setattr(extraction, 'source_gaps', lambda *args: [])
@@ -357,7 +365,7 @@ def test_chapter_failure_cancels_pending_requests_before_returning(monkeypatch):
                 force_refresh=True, document_hash='sample', document=None,
             )
         assert state['pending'] == 0
-        assert state['cancelled'] == len(MODULE_RULES) - 1
+        assert state['cancelled'] == min(concurrency, len(MODULE_RULES) - 1)
 
     asyncio.run(run())
 
@@ -549,6 +557,45 @@ def test_semantic_scope_and_hierarchy_values_are_not_required_to_appear_in_sourc
     assert result["rows"][0]["investment_subtable"] == "index"
 
 
+def test_row_identity_can_be_evidenced_by_same_page_heading_without_weakening_date_checks(monkeypatch):
+    base_rule = next(item for item in MODULE_RULES if item["rule_id"] == "investment.asset_allocation")
+    rule = extraction._rule_for_execution_plan(base_rule, _EXECUTION_PLANS[base_rule["rule_id"]])
+    rule["row_matching"] = {
+        **rule["row_matching"],
+        "identity_fields": [*rule["row_matching"].get("identity_fields", []), "share_class", "period_start"],
+    }
+    monkeypatch.setattr(extraction, "_verify_field", lambda *args, **kwargs: {
+        "raw_text": "10.00", "normalized_value": "10", "value_kind": "NUMBER", "unit": "元",
+        "evidence": {"status": "LOCATED"},
+    })
+    monkeypatch.setattr(extraction, "_evidence", lambda *args, **kwargs: {"status": "LOCATED"})
+    row = {
+        "row_label": "2024.01.01-2024.12.31", "row_quote": "2024.01.01-2024.12.31 10.00 2.00",
+        "row_page": 1, "share_class": "A",
+        "fields": {field: "10.00" for field in rule["fields"]},
+    }
+
+    result = extraction._verify_module(
+        document=None, pages=[{"page": 1, "text": "基金A 类\n" + row["row_quote"]}],
+        raw_module={"found": True, "scope": {}, "rows": [row]},
+        rule=rule, rule_text=Path(base_rule["file"]).read_text(encoding="utf-8"), source_pages={1},
+        section_markdown="基金A 类\n" + row["row_quote"], table_cache={}, header_maps={},
+    )
+
+    assert result["status"] == "EXTRACTED"
+    assert result["rows"][0]["schema_warnings"] == []
+
+    row["period_start"] = "2024-01-01"
+    row["row_quote"] = "年度收益 10.00 2.00"
+    result = extraction._verify_module(
+        document=None, pages=[{"page": 1, "text": "基金A 类\n2024.01.01-2024.12.31\n" + row["row_quote"]}],
+        raw_module={"found": True, "scope": {}, "rows": [row]},
+        rule=rule, rule_text=Path(base_rule["file"]).read_text(encoding="utf-8"), source_pages={1},
+        section_markdown="基金A 类\n2024.01.01-2024.12.31\n" + row["row_quote"], table_cache={}, header_maps={},
+    )
+    assert "row_quote_identity_mismatch" in result["rows"][0]["schema_warnings"]
+
+
 def test_verified_no_data_disclosure_is_valid_without_table_rows():
     rule = next(item for item in MODULE_RULES if item["rule_id"] == "investment.stock_holdings")
     quote = "本基金本报告期末未持有股票。"
@@ -579,6 +626,29 @@ def test_unverifiable_no_data_disclosure_does_not_clear_review_state():
     )
     assert result["status"] == "UNRESOLVED_STRUCTURE"
     assert result["disclosures"] == []
+
+
+def test_missing_module_requires_verifiable_not_applicable_quote(monkeypatch):
+    rule = next(item for item in MODULE_RULES if item["rule_id"] == "investment.bond_portfolio")
+    quote = "本基金不涉及该类投资。"
+    monkeypatch.setattr(extraction, "_evidence", lambda *args, **kwargs: {"status": "LOCATED", "page": 2, "quote": quote})
+
+    unresolved = extraction._verify_module(
+        document=None, pages=[{"page": 1, "text": "其他内容"}],
+        raw_module={"found": False, "rows": [], "applicability": {"status": "UNCERTAIN"}},
+        rule=rule, rule_text=Path(rule["file"]).read_text(encoding="utf-8"), source_pages=set(),
+        section_markdown="", table_cache={}, header_maps={},
+    )
+    assert unresolved["status"] == "UNRESOLVED_STRUCTURE"
+
+    not_applicable = extraction._verify_module(
+        document=None, pages=[{"page": 1, "text": "其他内容"}],
+        raw_module={"found": False, "rows": [], "applicability": {"status": "NOT_APPLICABLE", "page": 2, "quote": quote}},
+        rule=rule, rule_text=Path(rule["file"]).read_text(encoding="utf-8"), source_pages=set(),
+        section_markdown="", table_cache={}, header_maps={},
+    )
+    assert not_applicable["status"] == "NOT_APPLICABLE"
+    assert not_applicable["applicability"]["evidence"]["quote"] == quote
 
 
 def test_invalid_table_row_reference_recovers_only_unique_mapped_cell():
@@ -735,6 +805,57 @@ def test_specific_module_heading_wins_over_generic_parent_report_heading():
     assert "国债" not in section
 
 
+def test_chapter_router_uses_document_role_hints_to_select_detail_over_summary():
+    rule_id = "performance.annual_performance"
+    rule_texts = {rule_id: "逐年度业绩规则正文"}
+    plans = {
+        rule_id: {
+            "rule_identity": rule_id,
+            "rule_scope": "historical_performance",
+            "display_title": "逐年度基金业绩",
+            "search_intent": {
+                "target_description": "提取逐年度净值增长率和业绩比较基准收益率",
+                "preferred_sections": ["基金的业绩", "业绩表现"],
+                "preferred_sections_by_role": {
+                    "prospectus": ["基金的业绩", "逐年度业绩"],
+                    "periodic_report": [
+                        "基金净值表现",
+                        "本报告期基金份额净值增长率及其与同期业绩比较基准收益率的比较",
+                    ],
+                },
+            },
+            "row_matching": {"identity_headers": {}},
+            "comparison": {
+                "fields": [{"field": "nav_growth_rate", "label": "净值增长率"}],
+            },
+        },
+    }
+    markdown = """### 3.2.1 本报告期基金份额净值增长率及其与同期业绩比较基准收益率的比较
+|阶段|净值增长率|业绩比较基准收益率|
+|过去一年|1.26%|2.75%|
+## 4.5 报告期内基金的业绩表现
+报告期内基金业绩表现良好。
+## 4.6 其他说明
+后续章节
+"""
+
+    section = extraction._anydoc_sections(
+        markdown, rule_texts, plans, scope="historical_performance", role="periodic_report",
+    )[rule_id]
+
+    assert "3.2.1 本报告期基金份额净值增长率" in section
+    assert "|过去一年|1.26%|2.75%|" in section
+    assert "4.5 报告期内基金的业绩表现" not in section
+    assert "后续章节" not in section
+
+
+def test_historical_rule_snapshot_loads_public_rules_without_fixed_filename():
+    snapshot = extraction.capture_investment_rule_snapshot(scope="historical_performance")
+
+    assert "历年业绩核对公共规则" in snapshot["common_rules"]
+    assert "过去一年" in snapshot["common_rules"]
+
+
 def test_analyze_document_scopes_requests_and_never_accepts_false_missing_source_rows():
     pdf_path = Path("assets/易方达上证50交易型开放式指数证券投资基金2025年第4季度报告.pdf")
 
@@ -804,9 +925,7 @@ def test_table_cell_evidence_can_validate_a_quote_that_skips_an_intervening_cell
         table_cache,
             {rule["rule_id"]: extraction._header_aliases(_EXECUTION_PLANS[rule["rule_id"]])},
         required_fields_by_rule={rule["rule_id"]: set(rule["fields"])},
-        column_tolerance=extraction._cross_page_column_tolerance(
-            extraction.COMMON_RULE_FILE.read_text(encoding="utf-8")
-        ),
+        column_tolerance=extraction._cross_page_column_tolerance(),
     )
     try:
         evidence = extraction._evidence(
@@ -877,9 +996,7 @@ def test_table_row_evidence_uses_unique_structured_row_when_quote_is_reordered()
                 table_cache,
                 aliases,
                 required_fields_by_rule={rule["rule_id"]: set(rule["fields"]) for rule in MODULE_RULES},
-                column_tolerance=extraction._cross_page_column_tolerance(
-                    extraction.COMMON_RULE_FILE.read_text(encoding="utf-8")
-                ),
+                column_tolerance=extraction._cross_page_column_tolerance(),
             )
 
             evidence = extraction._evidence(
@@ -896,3 +1013,78 @@ def test_table_row_evidence_uses_unique_structured_row_when_quote_is_reordered()
 
         assert evidence["status"] == "LOCATED"
         assert evidence["bbox"] == expected_bbox
+
+
+def test_extract_prospectus_portfolio_period_covers_corpus_patterns():
+    cases = [
+        (
+            "body_cutoff",
+            [
+                {"page": 1, "text": "目录\n投资组合报告截止日为2024年1月1日 ...... 5"},
+                {"page": 59, "text": "（十二）基金投资组合报告\n投资组合报告截止日为2025年06月30日，本报告财务资料未经审计。"},
+            ],
+            {"value": "2025-06-30", "source_kind": "body_cutoff", "report_subtype": None, "page": 59},
+        ),
+        (
+            "body_range",
+            [{"page": 45, "text": "基金的投资组合报告\n本投资组合报告期自2025年1月1日起至2025年3月31日止。"}],
+            {"value": "2025-03-31", "source_kind": "body_range", "report_subtype": None, "page": 45},
+        ),
+        (
+            "quarterly_ref",
+            [{"page": 48, "text": "本投资组合报告所载数据截至2025 年12 月31 日，来源于《招商产业债券型证券投资基金2025年第4季度报告》。"}],
+            {"value": "2025-12-31", "source_kind": "body_cutoff", "report_subtype": "quarterly", "page": 48},
+        ),
+        (
+            "interim_ref_only",
+            [{"page": 40, "text": "本基金管理人依据《示例基金2025年中期报告》编制投资组合报告。"}],
+            {"value": "2025-06-30", "source_kind": "report_reference", "report_subtype": "interim", "page": 40},
+        ),
+        (
+            "annual_ref_only",
+            [{"page": 40, "text": "本基金管理人依据《示例基金2024年年度报告》编制投资组合报告。"}],
+            {"value": "2024-12-31", "source_kind": "report_reference", "report_subtype": "annual", "page": 40},
+        ),
+        (
+            "front_matter_linebreak",
+            [{"page": 2, "text": "本招募说明书所载内容截止日为2026年1月16日，基金\n业绩表现截止日为2025年12月31日。"}],
+            {"value": "2025-12-31", "source_kind": "front_matter", "report_subtype": None, "page": 2},
+        ),
+    ]
+    for name, pages, expected in cases:
+        found = extraction.extract_prospectus_portfolio_period(pages)
+        assert found is not None, name
+        for key, value in expected.items():
+            assert found[key] == value, (name, key, found)
+
+    assert extraction.extract_prospectus_portfolio_period([{"page": 10, "text": "暂无投资组合报告。"}]) is None
+    assert extraction.extract_prospectus_portfolio_period([
+        {"page": 50, "text": "投资组合报告截止日为2025年06月30日"},
+        {"page": 55, "text": "投资组合报告截止日为2025年09月30日"},
+    ]) is None
+
+
+def test_anydoc_sections_preserves_native_prose_over_headerless_ocr_block():
+    rule_id = "investment.portfolio_notes"
+    rule_texts = {rule["rule_id"]: Path(rule["file"]).read_text(encoding="utf-8") for rule in MODULE_RULES}
+    markdown = "\n\n".join(
+        [
+            "<!-- page:45 -->",
+            "## 10.10 基金投资组合报告",
+            "### 10.10.11 投资组合报告附注",
+            "本基金投资的前十名证券的发行主体未被监管部门立案调查。",
+            "<!-- image-ocr-start: page46 -->",
+            "## 10.10 基金投资组合报告",
+            "（此处为不含 Markdown 表格的图像扫描说明块）",
+            "<!-- image-ocr-end: page46 -->",
+        ]
+    )
+    sections = extraction._anydoc_sections(
+        markdown,
+        rule_texts,
+        _EXECUTION_PLANS,
+        scope="investment",
+        role="periodic_report",
+    )
+    assert "投资组合报告附注" in sections[rule_id]
+    assert "未被监管部门立案调查" in sections[rule_id]

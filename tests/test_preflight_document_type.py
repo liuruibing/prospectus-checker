@@ -5,6 +5,7 @@ from app.preflight import (
     _document_metadata,
     _extract_product_name,
     preflight_documents,
+    preflight_historical_documents,
     preflight_summary_documents,
 )
 from app.runtime import _summary_document_metadata
@@ -61,8 +62,19 @@ def test_summary_flow_requires_summary_and_accepts_periodic_report_role():
     assert result["status"] == "READY"
     assert result["blocked"] is False
     assert result["periodic_report"]["fund_code"] == "510100"
+    assert result["periodic_report"]["report_quarter"] == "4"
     assert result["periodic_report"]["report_subtype"] == "quarterly"
     assert result["periodic_report"]["report_send_date_interval"] == {"start": "2026-01-22", "end": "2026-01-22"}
+
+
+def test_historical_preflight_preserves_each_report_and_quarter_metadata():
+    result = preflight_historical_documents({"documents": {
+        "prospectus": {"filename": "招募说明书.pdf", "content": _pdf_bytes("样本证券投资基金更新的招募说明书 2026年3月")},
+        "historical_report_001": {"filename": "2025年4季度报告.pdf", "content": _pdf_bytes("样本证券投资基金2025年第4季度报告\n报告期末：2025年12月31日\n报告送出日期：2026年1月20日")},
+    }})
+    assert result["status"] == "READY"
+    assert result["documents"]["historical_report_001"]["report_subtype"] == "quarterly"
+    assert result["documents"]["historical_report_001"]["report_quarter"] == "4"
 
 
 def test_summary_preflight_collects_identity_facts_without_deciding_business_match():
@@ -368,4 +380,92 @@ def test_intake_keeps_product_summary_when_it_mentions_prospectus():
 
     assert metadata["detected_roles"] == ["product_summary"]
     assert metadata["is_product_summary"] is True
+
+
+def test_document_metadata_extracts_portfolio_period_end_for_prospectus():
+    metadata = _document_metadata(
+        "示例基金更新的招募说明书.pdf",
+        _pdf_bytes(
+            "示例基金更新的招募说明书\n"
+            "二〇二五年十一月\n"
+            "基金投资组合报告\n"
+            "投资组合报告截止日为2025年06月30日，数据源于《示例基金2025年第2季度报告》。"
+        ),
+        "prospectus",
+    )
+
+    assert metadata["portfolio_period_end_interval"] == {"start": "2025-06-30", "end": "2025-06-30"}
+    assert metadata["portfolio_report_subtype"] == "quarterly"
+    assert "2025年06月30日" in (metadata["portfolio_period_end_quote"] or "")
+
+
+def test_document_metadata_handles_chinese_numeral_periodic_lof_and_cover_summary_date():
+    periodic = _document_metadata(
+        "富国天惠成长混合型证券投资基金(LOF)二0二五年第4季度报告.pdf",
+        _pdf_bytes(
+            "富国天惠精选成长混合型证券投资基金(LOF)\n"
+            "二0二五年第4季度报告\n"
+            "2025年12月31日\n"
+            "基金主代码\n161005\n"
+            "送出日期：2026年1月21日"
+        ),
+        "auto",
+    )
+    assert periodic["detected_roles"] == ["periodic_report"]
+    assert periodic["is_periodic_report"] is True
+    assert periodic["fund_name"] == "富国天惠精选成长混合型证券投资基金(LOF)"
+    assert periodic["fund_code"] == "161005"
+    assert periodic["date_interval"] == {"start": "2025-12-31", "end": "2025-12-31"}
+    assert periodic["report_send_date_interval"] == {"start": "2026-01-21", "end": "2026-01-21"}
+
+    summary = _document_metadata(
+        "富国天惠精选成长混合型证券投资基金(LOF)基金产品资料概要更新.pdf",
+        _pdf_bytes(
+            "富国天惠精选成长混合型证券投资基金(LOF)基金产品资料概要更新\n"
+            "2026年6月16日\n"
+            "基金代码\n161005"
+        ),
+        "auto",
+    )
+    assert summary["detected_roles"] == ["product_summary"]
+    assert summary["is_product_summary"] is True
+    assert summary["fund_name"] == "富国天惠精选成长混合型证券投资基金(LOF)"
+    assert summary["fund_code"] == "161005"
+    assert summary["date_interval"] == {"start": "2026-06-16", "end": "2026-06-16"}
+    assert summary["date_label"] == "产品资料概要编制日期"
+
+
+def test_product_summary_extracts_both_compiled_and_send_dates():
+    from app.runtime import _summary_document_metadata
+
+    facts = _document_metadata(
+        "2026-09-15_产品资料概要更新.pdf",
+        _pdf_bytes(
+            "纳斯达克100交易型开放式指数证券投资基金基金产品资料概要更新\n"
+            "编制日期：2026年9月11日\n"
+            "送出日期：2026年9月15日\n"
+            "基金代码：513100"
+        ),
+        "product_summary",
+    )
+    assert facts["date_interval"] == {"start": "2026-09-11", "end": "2026-09-11"}
+    assert facts["report_send_date_interval"] == {"start": "2026-09-15", "end": "2026-09-15"}
+    meta = _summary_document_metadata("product_summary", facts)
+    assert meta["compiled_date"] == "2026-09-11"
+    assert meta["sent_date"] == "2026-09-15"
+
+
+def test_prospectus_extracts_opening_notice_cutoff_date_when_cover_has_no_date():
+    from app.runtime import _summary_document_metadata
+
+    path = "assets/纳斯达克100交易型开放式指数证券投资基金/2026-09-15_招募说明书更新_2026年第一号.pdf"
+    facts = _document_metadata(
+        "2026-09-15_招募说明书更新_2026年第一号.pdf",
+        open(path, "rb").read(),
+        "prospectus",
+    )
+    assert facts["version_date_interval"] == {"start": "2026-08-31", "end": "2026-08-31"}
+    assert facts["version_date_source"] == "pdf"
+    meta = _summary_document_metadata("prospectus", facts)
+    assert meta["version_date"] == "2026-08-31"
 

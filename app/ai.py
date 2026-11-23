@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import os
 import shutil
 import tempfile
-import asyncio
 import time
 from pathlib import Path
 from typing import Any
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 
@@ -65,7 +67,7 @@ class LangChainProvider:
         )
         return self._model
 
-    async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
+    async def _invoke_messages(self, messages: list[Any]) -> ModelText:
         queued = time.monotonic()
         async with self._slots:
             async with self._start_lock:
@@ -74,10 +76,7 @@ class LangChainProvider:
                     await asyncio.sleep(delay)
                 self._last_start = time.monotonic()
             started = time.monotonic()
-            response = await asyncio.wait_for(self.build_model().ainvoke([
-                ("system", system_prompt),
-                ("user", user_prompt),
-            ]), timeout=self.timeout)
+            response = await asyncio.wait_for(self.build_model().ainvoke(messages), timeout=self.timeout)
         content: Any = getattr(response, "content", "")
         text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
         if not text.strip():
@@ -89,6 +88,30 @@ class LangChainProvider:
             "usage": getattr(response, "usage_metadata", None),
             "finish_reason": metadata.get("finish_reason"),
         })
+
+    async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
+        return await self._invoke_messages([
+            ("system", system_prompt),
+            ("user", user_prompt),
+        ])
+
+    async def generate_multimodal_text(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        images: list[bytes],
+        *,
+        mime_type: str = "image/png",
+    ) -> str:
+        """Invoke the configured vision-capable model with text and inline images."""
+        parts: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
+        for raw in images:
+            encoded = base64.b64encode(raw).decode("ascii")
+            parts.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}})
+        return await self._invoke_messages([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=parts),
+        ])
 
 
 class OMPProvider:
@@ -104,6 +127,16 @@ class OMPProvider:
             raise RuntimeError(f"AI_NOT_CONFIGURED: OMP command not found: {self.command}")
         if not self.model_name:
             raise RuntimeError("AI_NOT_CONFIGURED: set PROSPECTUS_OMP_MODEL")
+
+    async def generate_multimodal_text(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        images: list[bytes],
+        *,
+        mime_type: str = "image/png",
+    ) -> str:
+        raise RuntimeError("AI_UNSUPPORTED_MULTIMODAL: OMPProvider does not support inline image recognition")
 
     async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
         self.require_configured()

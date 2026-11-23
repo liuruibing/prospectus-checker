@@ -28,6 +28,7 @@ export default {
       if (!result.jobs || !result.jobs.length) return;
       this.$emit("update:visible", false);
       this.$emit("batch-submitted", result);
+      this.$emit("submitted", result.jobs[0]);
     },
   },
 };

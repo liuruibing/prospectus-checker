@@ -42,7 +42,21 @@
           <el-empty v-else description="概要文件不可用" />
         </section>
         <section class="summary-document-panel">
-          <div v-if="referenceDocument" class="summary-document-heading"><span>{{ roleLabel(activeRole) }}</span><strong>{{ referenceDocument.filename }}</strong></div>
+          <div v-if="referenceDocument" class="summary-document-heading">
+            <div v-if="referenceRoles.length > 1" class="summary-reference-tabs" role="tablist" aria-label="参考文档">
+              <button
+                v-for="role in referenceRoles"
+                :key="role.key"
+                type="button"
+                role="tab"
+                :aria-selected="activeRole === role.key"
+                :class="{ active: activeRole === role.key }"
+                @click="activeRole = role.key"
+              >{{ role.label }}</button>
+            </div>
+            <span v-else>{{ roleLabel(activeRole) }}</span>
+            <strong :title="referenceDocument.filename">{{ referenceDocument.filename }}</strong>
+          </div>
           <pdf-viewer v-if="referenceDocument" ref="referenceViewer" :role-name="activeRole" :title="roleLabel(activeRole)" :document-info="referenceDocument" :evidences="referenceEvidences" />
           <el-empty v-else description="参考文件不可用" />
         </section>
@@ -120,6 +134,7 @@ export default {
       const firstGroup = this.groupedItems[0];
       this.expandedGroupId = firstGroup ? firstGroup.id : "";
       this.selectedIndex = firstGroup && firstGroup.items[0] ? firstGroup.items[0].index : 0;
+      this.activeRole = this.preferredRoleForItem(this.currentItem);
     },
     groupedItems(groups) {
       if (!groups.length) {
@@ -152,6 +167,17 @@ export default {
         return item.fallback_lookup && item.fallback_lookup.comparison_reason || "概要与补充招募说明书的本项披露一致。";
       }
       if (item.status === "MATCH") return reference.reason || item.reason || "双方字段原文及引用已通过核验，核对一致。";
+      if (
+        reference.role !== "prospectus"
+        && item.fallback_lookup
+        && item.fallback_lookup.status === "UNRESOLVED"
+        && item.fallback_lookup.reason
+        && item.reason
+        && item.reason !== item.fallback_lookup.reason
+        && item.reason.indexOf("招募说明书") === -1
+      ) {
+        return item.reason + "（补充招募说明书：" + item.fallback_lookup.reason + "）";
+      }
       return item.reason;
     },
     groupStatus(group) {
@@ -178,11 +204,28 @@ export default {
           this.expandedGroupId = firstGroup.id;
           this.selectedIndex = firstGroup.items[0].index;
         }
-        if (this.result && !this.result.documents[this.activeRole]) this.activeRole = this.referenceRoles[0] && this.referenceRoles[0].key || "";
+        if (this.result && (!silent || !this.activeRole || !this.result.documents[this.activeRole])) {
+          this.activeRole = this.preferredRoleForItem(this.currentItem);
+        }
       } catch (error) { this.error = error.response && error.response.data && error.response.data.detail || "无法读取核对任务"; }
       finally { this.loading = false; }
     },
-    selectItem(index) { this.selectedIndex = index; const item = this.filteredItems[index]; const reference = this.referenceRoles.find((role) => item.references && item.references[role.key] && item.references[role.key].evidence.length); if (reference) this.activeRole = reference.key; },
+    preferredRoleForItem(item) {
+      if (!item) return this.referenceRoles[0] && this.referenceRoles[0].key || "";
+      const preferredKeys = [
+        item.selected_reference && item.selected_reference.role,
+        item.reference && item.reference.role,
+        ...this.referenceRoles.map((role) => role.key),
+      ].filter(Boolean);
+      const withEvidence = preferredKeys.find((key) => {
+        const ref = item.references && item.references[key];
+        return ref && Array.isArray(ref.evidence) && ref.evidence.length > 0 && this.result && this.result.documents[key];
+      });
+      if (withEvidence) return withEvidence;
+      const validPreferred = preferredKeys.find((key) => this.result && this.result.documents[key]);
+      return validPreferred || (this.referenceRoles[0] && this.referenceRoles[0].key) || "";
+    },
+    selectItem(index) { this.selectedIndex = index; this.activeRole = this.preferredRoleForItem(this.filteredItems[index]); },
     draftException(item) { this.$message.info("已选择「" + (item && item.label || "该待复核项") + "」草拟例外"); },
     toViewerEvidences(side) { const item = this.currentItem; return (side && side.evidence || []).map((source) => ({ ...source, status: "LOCATED", field_label: item.label, difference_status: item.status })); },
     scrollEvidence() { const summary = this.summaryEvidences[0], reference = this.referenceEvidences[0]; if (summary && this.$refs.summaryViewer) this.$refs.summaryViewer.scrollToPage(summary.page); if (reference && this.$refs.referenceViewer) this.$refs.referenceViewer.scrollToPage(reference.page); },

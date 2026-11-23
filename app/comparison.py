@@ -26,7 +26,7 @@ def _canonical_unit(unit: Any) -> str:
     value = normalize_text(str(unit or "")).lower()
     return _UNIT_ALIASES.get(value, value)
 
-def _disclosure_key(disclosure: dict[str, Any]) -> tuple[str, str] | None:
+def _disclosure_key(disclosure: dict[str, Any], matching: dict[str, Any]) -> tuple[str, str] | None:
     period = "".join(ch for ch in str(disclosure.get("period_end") or "") if ch.isdigit())
     scope = disclosure.get("scope")
     if not period or not isinstance(scope, dict) or not scope:
@@ -34,28 +34,56 @@ def _disclosure_key(disclosure: dict[str, Any]) -> tuple[str, str] | None:
     normalized = tuple(sorted((normalize_text(key), normalize_text(value)) for key, value in scope.items()))
     if any(not key or not value or value.casefold() in {"unknown", "未知", "不确定"} for key, value in normalized):
         return None
+    declared = set(matching.get("scope_fields", []))
+    if disclosure.get("status") == "NO_DATA":
+        normalized = tuple(
+            (key, value) for key, value in normalized
+            if key not in {"disclosure_scope", "limit"} and (key in declared or value != "all")
+        )
+    else:
+        declared.add("limit")
+        normalized = tuple((key, value) for key, value in normalized if key in declared or value != "all")
     return period, repr(normalized)
 
 
-def _compare_empty_disclosures(
-    left_module: dict[str, Any], right_module: dict[str, Any],
-) -> str:
+def _match_empty_disclosures(
+    left_module: dict[str, Any], right_module: dict[str, Any], matching: dict[str, Any],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     """Compare verified chapter-level disclosures when neither side has table rows."""
     left = left_module.get("disclosures") or []
     right = right_module.get("disclosures") or []
     if not left or not right:
-        return "UNRESOLVED_STRUCTURE"
+        return []
     if any(module.get("status") != "EXTRACTED" for module in (left_module, right_module)):
-        return "UNRESOLVED_STRUCTURE"
-    left_keys = [_disclosure_key(item) for item in left]
-    right_keys = [_disclosure_key(item) for item in right]
-    if any(key is None for key in (*left_keys, *right_keys)):
-        return "UNRESOLVED_STRUCTURE"
-    if any(item.get("status") != "NO_DATA" for item in (*left, *right)):
-        return "UNRESOLVED_STRUCTURE"
-    if sorted(left_keys) == sorted(right_keys):
-        return "MATCH"
-    return "UNRESOLVED_STRUCTURE"
+        return []
+    def key(item):
+        return _disclosure_key(item, matching)
+
+    def _dedup_no_data(items: list[dict[str, Any]]) -> list[tuple[tuple[str, str], dict[str, Any]]] | None:
+        by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        not_disclosed_keys: set[tuple[str, str]] = set()
+        for item in items:
+            st = item.get("status")
+            k = key(item)
+            if k is None:
+                return None
+            if st == "NO_DATA":
+                by_key.setdefault(k, item)
+            elif st == "NOT_DISCLOSED":
+                not_disclosed_keys.add(k)
+            else:
+                return None
+        if not by_key or not not_disclosed_keys.issubset(by_key):
+            return None
+        return sorted(by_key.items(), key=lambda pair: pair[0])
+
+    left_pairs = _dedup_no_data(left)
+    right_pairs = _dedup_no_data(right)
+    if not left_pairs or not right_pairs:
+        return []
+    if [k for k, _ in left_pairs] != [k for k, _ in right_pairs]:
+        return []
+    return [(l_item, r_item) for (_, l_item), (_, r_item) in zip(left_pairs, right_pairs)]
 
 
 def _no_data_conflicts_with_rows(
@@ -187,10 +215,9 @@ def _generic_normalize_identity(value: Any, operation: str = "text") -> str:
     return normalize_text(value)
 
 
-def _identity_equivalence_map(matching: dict[str, Any]) -> dict[str, str]:
-    """Build the rule-declared, normalized name equivalences for row identity."""
+def _equivalence_map(groups: list[dict[str, Any]]) -> dict[str, str]:
     result: dict[str, str] = {}
-    for group in matching.get("identity_equivalence_groups", []):
+    for group in groups:
         canonical = _generic_normalize_identity(group.get("canonical_identity"))
         if not canonical:
             continue
@@ -199,6 +226,16 @@ def _identity_equivalence_map(matching: dict[str, Any]) -> dict[str, str]:
             if normalized:
                 result[normalized] = canonical
     return result
+
+
+def _identity_equivalence_map(matching: dict[str, Any]) -> dict[str, str]:
+    return _equivalence_map(matching.get("identity_equivalence_groups", []))
+
+
+def _canonical_scope(value: Any, field: str, matching: dict[str, Any]) -> str:
+    normalized = normalize_text(value)
+    groups = matching.get("scope_equivalence_groups", {}).get(field, [])
+    return _equivalence_map(groups).get(normalized, normalized)
 
 
 def _canonical_row_name(value: Any, matching: dict[str, Any]) -> str:
@@ -218,8 +255,8 @@ def _row_identity_value(row: dict[str, Any], field: str, matching: dict[str, Any
         value = (row.get("fields") or {}).get(field)
     if isinstance(value, dict):
         value = value.get("raw_text")
-    if field == "label":
-        return _canonical_row_name(value, matching)
+    if field in {"label", "row_label"}:
+        return _canonical_row_name(value if value is not None else row.get("label"), matching)
     operation = "identifier" if field.endswith(("_code", "_id")) else "text"
     return _generic_normalize_identity(value, operation)
 
@@ -316,7 +353,7 @@ def _plan_row_candidates(
     scopes = []
     for field in matching.get("scope_fields", []):
         value = row.get(field)
-        normalized = normalize_text(value)
+        normalized = _canonical_scope(value, field, matching)
         if normalized and normalized not in {"unknown", "未知", "不确定"}:
             scopes.append(f"{field}={normalized}")
     hierarchy = []
@@ -391,6 +428,8 @@ def _row_dimension_values(
                 continue
             normalized = parent_labels[normalized]
             normalized = _canonical_row_name(normalized, matching or {})
+        else:
+            normalized = _canonical_scope(value, field, matching or {})
         result[field] = normalized
     return result
 
@@ -429,7 +468,9 @@ def _generic_align_rows(
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], set[str]]:
     def parent_labels(rows: list[dict[str, Any]]) -> dict[str, str]:
         aliases: dict[str, str] = {}
-        identity_fields = [*matching.get("identity_fields", []), *matching.get("fallback_identity_fields", [])]
+        identity_fields = dict.fromkeys([
+            "row_key", *matching.get("identity_fields", []), *matching.get("fallback_identity_fields", []),
+        ])
         for row in rows:
             label = normalize_text(row.get("label"))
             if not label:
@@ -605,8 +646,21 @@ def evaluate_declared_context(
 
     def assess(check: dict[str, Any], *, required: bool = True) -> bool | None:
         left = _generic_path_value(target_doc, {}, check["target_path"])
+        if left is None and check["target_path"] == "document.metadata.sent_date":
+            left = _generic_path_value(target_doc, {}, "document.metadata.compiled_date")
         right = _generic_path_value(reference_doc, {}, check["reference_path"])
         matches = _context_values_match(left, right, check["operation"], max_days=check.get("max_days"))
+        if (
+            matches is False
+            and reference_role == "prospectus"
+            and check["target_path"] == "document.metadata.compiled_date"
+            and check["operation"] == "reference_before_or_equal"
+        ):
+            sent_left = _generic_path_value(target_doc, {}, "document.metadata.sent_date")
+            if sent_left:
+                sent_matches = _context_values_match(sent_left, right, check["operation"], max_days=check.get("max_days"))
+                if sent_matches is True:
+                    matches = True
         if matches is None and not required:
             return None
         if check.get("on_mismatch") == "warn" and matches is False:
@@ -640,6 +694,7 @@ def evaluate_declared_context(
 
 def _generic_compare_module(
     plan: dict[str, Any], left_doc: dict[str, Any], right_doc: dict[str, Any], blocked_status: str | None,
+    semantic_pairs: list[tuple[int, int, str]] | None = None,
 ) -> dict[str, Any]:
     rule_id = plan["rule_identity"]
     title = plan["display_title"]
@@ -651,8 +706,36 @@ def _generic_compare_module(
             "periodic_rows": (right_module or {}).get("rows", [])}
     if blocked_status:
         return {**base, "status": blocked_status, "differences": []}
-    if not left_module or not right_module or any(
-        module.get("status") == "UNRESOLVED_STRUCTURE" for module in (left_module, right_module) if module
+    target_population = plan["row_matching"]["target_population"]
+    common_only = target_population == "common_rows"
+    target_scope_only = target_population == "target_document" and plan["row_matching"]["reference_superset_allowed"]
+    if left_module and left_module.get("status") == "NOT_APPLICABLE":
+        if target_scope_only:
+            return {
+                **base,
+                "status": "NOT_APPLICABLE",
+                "differences": [],
+                "review_message": "招募说明书原文已确认该模块不适用，定期报告中额外披露的内容不在本次核对范围。",
+                "prospectus_applicability": left_module.get("applicability"),
+            }
+        return {
+            **base,
+            "status": "UNRESOLVED_STRUCTURE",
+            "differences": [],
+            "review_message": "目标文件确认该模块不适用，但当前规则要求按双方披露范围核对。",
+        }
+    if right_module and right_module.get("status") == "NOT_APPLICABLE" and left_module:
+        return {
+            **base,
+            "status": "UNRESOLVED_STRUCTURE",
+            "differences": [],
+            "review_message": "招募说明书披露了该模块，参考报告原文却说明不适用；需确认双方范围及原文。",
+            "periodic_applicability": right_module.get("applicability"),
+        }
+    both_have_rows = bool((left_module or {}).get("rows") and (right_module or {}).get("rows"))
+    if not left_module or not right_module or (
+        any(module.get("status") == "UNRESOLVED_STRUCTURE" for module in (left_module, right_module) if module)
+        and not both_have_rows
     ):
         return {
             **base,
@@ -660,6 +743,9 @@ def _generic_compare_module(
             "differences": [],
             "review_message": "至少一侧章节结构尚未确认，不能据此判断模块缺失。",
         }
+    partial_structure_unresolved = any(
+        module.get("status") == "UNRESOLVED_STRUCTURE" for module in (left_module, right_module) if module
+    )
     missing_sides = [module for module in (left_module, right_module)
                      if module.get("status") == "MISSING_MODULE"]
     if missing_sides and len(missing_sides) == 2:
@@ -736,6 +822,27 @@ def _generic_compare_module(
     left_rows = left_module.get("rows", [])
     right_rows = right_module.get("rows", [])
     matching = plan["row_matching"]
+    comparison_fields = plan["comparison"]["fields"]
+    is_semantic_module = bool(comparison_fields) and all(f.get("operation") == "semantic" for f in comparison_fields)
+
+    def _only_negative_semantic_rows(rows: list[dict[str, Any]]) -> bool:
+        if not rows or not is_semantic_module:
+            return False
+        for row in rows:
+            fields = row.get("fields") or {}
+            fact = (fields.get(comparison_fields[0]["field"]) or {}).get("raw_text")
+            norm = normalize_text(str(fact or "")).strip("。；;，, ")
+            if not norm or norm not in {"无", "不适用", "未持有", "无投资"}:
+                return False
+        return True
+
+    if not left_rows and right_rows:
+        if left_module.get("disclosures") and right_module.get("disclosures") and _only_negative_semantic_rows(right_rows):
+            right_rows = []
+    elif left_rows and not right_rows:
+        if left_module.get("disclosures") and right_module.get("disclosures") and _only_negative_semantic_rows(left_rows):
+            left_rows = []
+
     if not left_rows and right_rows:
         conflict = _no_data_conflicts_with_rows(left_module, left_doc, right_module, right_doc, matching)
         if conflict:
@@ -765,33 +872,50 @@ def _generic_compare_module(
                 {**claim, "period_end": claim.get("period_end") or period}
                 for claim in module.get("disclosures", [])
             ]}
-        disclosure_status = _compare_empty_disclosures(
-            with_period(left_module, left_doc), with_period(right_module, right_doc),
+        pairs = _match_empty_disclosures(
+            with_period(left_module, left_doc), with_period(right_module, right_doc), matching,
         )
-        if disclosure_status:
-            differences = [] if disclosure_status == "MATCH" else [
-                _field_difference(rule_id, title, "disclosure_status", None, None, "UNRESOLVED",
-                                  "披露状态、期间或范围证据不足")
-            ]
-            return {**base, "status": disclosure_status, "differences": differences,
-                    "review_message": None if disclosure_status == "MATCH" else "双方明确未持有披露的期间或适用范围证据不足。",
-                    "prospectus_disclosures": left_module.get("disclosures", []),
-                    "periodic_disclosures": right_module.get("disclosures", [])}
+        checks = [
+            _field_difference(
+                f"{rule_id}:disclosure:{index}", "无数据披露", "disclosure_status",
+                {"raw_text": left.get("quote"), "evidence": left.get("evidence")},
+                {"raw_text": right.get("quote"), "evidence": right.get("evidence")},
+                "MATCH", "两侧的披露状态、报告期及适用范围一致。", field_label="披露原文",
+            )
+            for index, (left, right) in enumerate(pairs)
+        ]
+        differences = [] if pairs else [
+            _field_difference(rule_id, title, "disclosure_status", None, None, "UNRESOLVED",
+                              "披露状态、期间或范围证据不足")
+        ]
+        return {**base, "status": "MATCH" if pairs else "UNRESOLVED_STRUCTURE",
+                "differences": differences, "checks": checks or differences,
+                "review_message": None if pairs else "双方明确未持有披露的期间或适用范围证据不足。",
+                "prospectus_disclosures": left_module.get("disclosures", []),
+                "periodic_disclosures": right_module.get("disclosures", [])}
 
-    target_population = matching["target_population"]
-    target_only = target_population == "target_document" and matching["reference_superset_allowed"]
-    left_index, right_index, unresolved_rows = _generic_align_rows(
-        left_rows, right_rows, matching, "target_document" if target_only else "both_documents",
-    )
-    unresolved = bool(unresolved_rows or scope_unresolved)
+    target_only = common_only or (target_population == "target_document" and matching["reference_superset_allowed"])
+    if (semantic_pairs is not None and common_only and len(comparison_fields) == 1
+            and comparison_fields[0]["operation"] == "semantic"):
+        left_index = {f"fact:{i}": left_rows[i] for i, _, _ in semantic_pairs}
+        right_index = {f"fact:{i}": right_rows[j] for i, j, _ in semantic_pairs}
+        semantic_checks = {f"fact:{i}": status for i, _, status in semantic_pairs}
+        unresolved_rows = set()
+    else:
+        left_index, right_index, unresolved_rows = _generic_align_rows(
+            left_rows, right_rows, matching, "target_document" if target_only else "both_documents",
+        )
+        semantic_checks = {}
+    unresolved = bool(unresolved_rows or scope_unresolved or partial_structure_unresolved)
+    missing_from_incomplete_source = False
     keys = set(left_index) | set(right_index)
 
-    differences: list[dict[str, Any]] = []
+    checks: list[dict[str, Any]] = []
     for key in sorted(keys):
         left_row, right_row = left_index.get(key), right_index.get(key)
         label = str((left_row or right_row or {}).get("label") or key)
         if left_row is None or right_row is None:
-            if target_only and left_row is None:
+            if common_only or (target_only and left_row is None):
                 continue
             if unresolved_rows:
                 # An unmatched row may be an identity/scope collision that the
@@ -804,6 +928,7 @@ def _generic_compare_module(
             if (matching["require_complete_source_for_missing"]
                     and not _generic_coverage_complete(missing_side_module)):
                 unresolved = True
+                missing_from_incomplete_source = True
                 continue
             present = left_row or right_row or {}
             side_msg = (
@@ -815,7 +940,7 @@ def _generic_compare_module(
                                      {"raw_text": present.get("label"), "evidence": present.get("row_evidence")} if left_row else None,
                                      {"raw_text": present.get("label"), "evidence": present.get("row_evidence")} if right_row else None,
                                      "MISSING_ROW", side_msg)
-            differences.append(diff)
+            checks.append(diff)
             continue
         for field_spec in plan["comparison"]["fields"]:
             field = field_spec["field"]
@@ -823,26 +948,48 @@ def _generic_compare_module(
             if left_value is None or right_value is None:
                 if field_spec["required"]:
                     unresolved = True
-                    differences.append(_field_difference(key, label, field, left_value, right_value,
-                                                         "UNRESOLVED", "比较所需字段未能完整识别，需人工复核。"))
+                    checks.append(_field_difference(
+                        key, label, field, left_value, right_value,
+                        "UNRESOLVED", "比较所需字段未能完整识别，需人工复核。",
+                    ))
                 continue
-            if any((value.get("evidence") or {}).get("status") != "LOCATED" for value in (left_value, right_value)):
+            def _field_ev_ok(val: dict[str, Any], row: dict[str, Any]) -> bool:
+                ev = val.get("evidence") or {}
+                if ev.get("status") == "LOCATED":
+                    return True
+                return (
+                    val.get("value_kind") == "DASH"
+                    and ev.get("status") == "QUOTE_ONLY"
+                    and (row.get("row_evidence") or {}).get("status") == "LOCATED"
+                )
+
+            if not (_field_ev_ok(left_value, left_row) and _field_ev_ok(right_value, right_row)):
                 unresolved = True
-                differences.append(_field_difference(key, label, field, left_value, right_value,
-                                                     "UNRESOLVED", "字段原文证据未能定位，需人工复核。"))
+                checks.append(_field_difference(
+                    key, label, field, left_value, right_value,
+                    "UNRESOLVED", "字段原文证据未能定位，需人工复核。",
+                ))
                 continue
-            field_status = compare_declared_field(field_spec, left_value, right_value)
+            semantic_status = None
+            if field_spec["operation"] == "semantic":
+                left_text = normalize_text(left_value.get("raw_text"))
+                semantic_status = semantic_checks.get(key)
+                if semantic_status is None and left_text and left_text == normalize_text(right_value.get("raw_text")):
+                    semantic_status = "MATCH"
+            field_status = compare_declared_field(field_spec, left_value, right_value, semantic_status=semantic_status)
             if field_status == "UNRESOLVED":
                 unresolved = True
-                differences.append(_field_difference(key, label, field, left_value, right_value,
-                                                     "UNRESOLVED", "字段值或比较口径无法确认，需人工复核。"))
+                message = "字段值或比较口径无法确认，需人工复核。"
             elif field_status == "MISMATCH":
-                differences.append(_field_difference(
-                    key, label, field, left_value, right_value, "MISMATCH",
-                    f"双方原文及引用已核验，按规则声明的比较口径判定{field_spec['label']}披露不一致。",
-                    field_label=field_spec["label"],
-                ))
+                message = f"双方原文及引用已核验，按规则声明的比较口径判定{field_spec['label']}披露不一致。"
+            else:
+                message = "双方原文及引用已核验，按规则声明的比较口径判定一致。"
+            checks.append(_field_difference(
+                key, label, field, left_value, right_value, field_status, message,
+                field_spec["label"] if field_status != "UNRESOLVED" else None,
+            ))
 
+    differences = [item for item in checks if item["status"] != "MATCH"]
     if any(item["status"] in {"MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE"} for item in differences):
         status = "MISMATCH"
     elif unresolved or any(item["status"] == "UNRESOLVED" for item in differences):
@@ -850,12 +997,15 @@ def _generic_compare_module(
     else:
         status = "MATCH"
     messages = []
+    if common_only and not checks:
+        status = "UNRESOLVED_STRUCTURE"
+        messages.append("双方未找到可唯一对应且有证据的共有事实。")
     if unresolved_rows:
         messages.append("部分行身份或适用范围不能唯一匹配，已保留待复核状态。")
     if scope_unresolved:
         messages.append("基金身份、期间或规则声明的适用范围未能确认一致。")
-    if not _generic_coverage_complete(right_module) and matching["require_complete_source_for_missing"]:
-        messages.append("参考文档的披露范围或结构完整性尚未确认。")
+    if missing_from_incomplete_source:
+        messages.append("未匹配行的来源范围或结构完整性尚未确认。")
     disclosure_ranges = None
     if any((module.get("scope") or {}).get("disclosure_scope") is not None
            for module in (left_module, right_module)):
@@ -868,7 +1018,7 @@ def _generic_compare_module(
     if target_only:
         selected_reference_ids = {id(row) for row in right_index.values()}
         display_right_rows = [row for row in right_rows if id(row) in selected_reference_ids]
-    return {**base, "status": status, "differences": differences,
+    return {**base, "status": status, "differences": differences, "checks": checks,
             "periodic_rows": display_right_rows,
             "review_message": " ".join(messages) or None,
             **({"context_warnings": context_warnings} if context_warnings else {}),
@@ -914,6 +1064,8 @@ def _load_active_investment_plans() -> dict[str, dict[str, Any]]:
 def compare_documents(
     prospectus: dict[str, Any], periodic_report: dict[str, Any],
     execution_plans: dict[str, dict[str, Any]] | None = None,
+    *,
+    semantic_pairs: dict[str, list[tuple[int, int, str]]] | None = None,
 ) -> dict[str, Any]:
     left_info = prospectus.get("document_info", {})
     right_info = periodic_report.get("document_info", {})
@@ -936,19 +1088,22 @@ def compare_documents(
     for module_id in module_ids:
         plan = execution_plans.get(module_id)
         if plan is not None:
-            compared_module = _generic_compare_module(plan, prospectus, periodic_report, blocked_status)
+            compared_module = _generic_compare_module(
+                plan, prospectus, periodic_report, blocked_status, (semantic_pairs or {}).get(module_id),
+            )
             for warn_key, warn_text in compared_module.pop("context_warnings", []):
                 if warn_key not in seen_warn_keys:
                     seen_warn_keys.add(warn_key)
                     warnings.append(warn_text)
-            modules.append(compared_module)
         else:
-            modules.append(_compare_module_without_plan(module_id, prospectus, periodic_report, blocked_status))
+            compared_module = _compare_module_without_plan(module_id, prospectus, periodic_report, blocked_status)
+        compared_module.setdefault("checks", compared_module["differences"])
+        modules.append(compared_module)
     differences = [item for module in modules for item in module["differences"]]
     real_differences = sum(item["status"] in {"MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE", "RANK_ORDER_CHANGED"} for item in differences)
     if real_differences:
         status = "MISMATCH"
-    elif any(module["status"] != "MATCH" for module in modules):
+    elif any(module["status"] not in {"MATCH", "NOT_APPLICABLE"} for module in modules):
         status = "UNRESOLVED"
     else:
         status = "MATCH"

@@ -154,6 +154,6 @@ def test_context_plan_carries_entire_selected_section_without_silent_truncation(
 
 def test_compiled_plan_is_required_for_new_summary_tasks():
     _, rules = load_markdown_rules(require_execution_plans=True)
-    assert len(rules) == 16
+    assert len(rules) == 19
     assert all(rule["execution_plan"]["search_intent"]["include_continuations"] for rule in rules)
     assert all(rule["preferred_sections_by_role"] for rule in rules)

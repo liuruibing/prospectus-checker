@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from app.ai import make_provider
 from app.audit import TaskAuditStore
+from app.comparison import compare_documents
 from app.runtime import InvestmentComparisonWorkflow, ProductSummaryVerificationWorkflow, WorkflowContext, WorkflowEngine, WorkflowRegistry
 from app.summary_check import RULE_VERSION as SUMMARY_RULE_VERSION
 from app.summary_check import capture_product_summary_rule_snapshot
@@ -82,21 +83,69 @@ def _intake_date(metadata: dict) -> str:
     return str(interval.get("end") or interval.get("start") or "") if isinstance(interval, dict) else ""
 
 
+def _intake_portfolio_period_end(metadata: dict) -> str:
+    interval = metadata.get("portfolio_period_end_interval") or {}
+    return str(interval.get("end") or interval.get("start") or "") if isinstance(interval, dict) else ""
+
+
+def _intake_report_period_end(metadata: dict) -> str:
+    if metadata.get("display_date_label") == "定期报告送出日期":
+        return ""
+    return _intake_date(metadata)
+
+
+def _intake_report_send_date(metadata: dict) -> str:
+    interval = metadata.get("report_send_date_interval") or {}
+    if isinstance(interval, dict) and (interval.get("end") or interval.get("start")):
+        return str(interval.get("end") or interval.get("start") or "")
+    if metadata.get("display_date_label") == "定期报告送出日期":
+        return _intake_date(metadata)
+    return ""
+
+
+def _summary_report_send_eligible(compiled_date: str, report: dict) -> bool:
+    if not compiled_date:
+        return True
+    metadata = report.get("metadata") or {}
+    send_date = _intake_report_send_date(metadata)
+    if send_date:
+        return send_date <= compiled_date
+    period_date = _intake_report_period_end(metadata)
+    return not period_date or period_date <= compiled_date
+
+
 async def _suggest_intake_matches(documents: dict[str, dict]) -> list[dict]:
     cores = [item for item in documents.values() if item["role"] in {"prospectus", "product_summary"}]
     reports = [item for item in documents.values() if item["role"] == "periodic_report"]
     unresolved = []
     for core in cores:
         strict = [report for report in reports if _intake_identity_matches(core, report)]
-        core_date = _intake_date(core["metadata"])
-        dated = [report for report in strict if _intake_date(report["metadata"])]
-        has_local_recommendation = bool(strict) and (
-            not core_date
-            or any(_intake_date(report["metadata"]) <= core_date for report in dated)
-            or (not dated and len(strict) == 1)
-        )
-        if not has_local_recommendation:
-            unresolved.append(core)
+        if core["role"] == "prospectus":
+            portfolio_period = _intake_portfolio_period_end(core["metadata"])
+            if strict:
+                # When fund identity already matches locally and the prospectus declares a
+                # portfolio period_end, only exact same-period reports qualify; do not ask
+                # AI to bridge across different reporting periods.
+                if portfolio_period or any(
+                    _intake_report_period_end(report["metadata"]) for report in strict
+                ):
+                    continue
+                if len(strict) == 1:
+                    continue
+        else:
+            core_date = _intake_date(core["metadata"])
+            dated = [
+                report for report in strict
+                if _intake_report_send_date(report["metadata"]) or _intake_date(report["metadata"])
+            ]
+            has_local_recommendation = bool(strict) and (
+                not core_date
+                or any(_summary_report_send_eligible(core_date, report) for report in dated)
+                or (not dated and len(strict) == 1)
+            )
+            if has_local_recommendation:
+                continue
+        unresolved.append(core)
     if not unresolved or not reports:
         return []
 
@@ -104,13 +153,17 @@ async def _suggest_intake_matches(documents: dict[str, dict]) -> list[dict]:
         metadata = item.get("metadata") or {}
         return {
             "id": item["id"],
+            "role": item.get("role"),
             "filename": item["filename"],
             "relative_path": item["relative_path"],
             "fund_name": metadata.get("fund_name"),
             "fund_code": metadata.get("fund_code"),
             "fund_codes": metadata.get("fund_codes") or [],
             "document_date": _intake_date(metadata),
+            "report_send_date": _intake_report_send_date(metadata),
             "date_label": metadata.get("display_date_label") or metadata.get("date_label"),
+            "portfolio_period_end": _intake_portfolio_period_end(metadata),
+            "portfolio_report_subtype": metadata.get("portfolio_report_subtype"),
             "report_subtype": metadata.get("report_subtype"),
             "cover_text": item.get("ai_excerpt", ""),
         }
@@ -119,9 +172,11 @@ async def _suggest_intake_matches(documents: dict[str, dict]) -> list[dict]:
                     "periodic_reports": [document_summary(item) for item in reports]}
     system_prompt = (
         "你负责为基金文件建立候选关联。只根据输入的文件名、基金名称、代码和日期判断是否属于同一基金。"
-        "定期报告的报告期末通常早于招募说明书或产品概要日期；较近且合理的报告期优先。"
-        "不要把日期规则当成绝对门槛，也不要仅因日期较早就拒绝匹配。代码不同但名称或文件上下文能说明是同一基金时可以匹配；"
-        "信息不足或可能是不同基金时不要猜。只输出 JSON：{\"matches\":[{\"core_file_id\":\"...\","
+        "当核心文件为招募说明书（prospectus）时，若其披露了 portfolio_period_end（投资组合报告期末），"
+        "只能关联同基金且定期报告期末（document_date）与 portfolio_period_end 完全相同的定期报告，不得跨报告期匹配；"
+        "当核心文件为产品概要（product_summary）时，定期报告的报告送出日期（report_send_date）必须不晚于概要编制日期（document_date >= report_send_date），报告送出日期较近且符合条件的报告优先。"
+        "代码不同但名称或文件上下文能说明是同一基金时可以匹配；信息不足、可能是不同基金或招募说明书报告期末不相等时不要猜。"
+        "只输出 JSON：{\"matches\":[{\"core_file_id\":\"...\","
         "\"periodic_file_id\":\"...\",\"same_product\":true,\"confidence\":0.0,\"reason\":\"简短中文理由\"}]}。"
         "每个核心文件最多给一个候选；ID 必须来自输入。"
     )
@@ -144,8 +199,8 @@ async def _suggest_intake_matches(documents: dict[str, dict]) -> list[dict]:
         print(f"intake AI matching skipped: {type(exc).__name__}")
         return []
 
-    core_ids = {item["id"] for item in unresolved}
-    report_ids = {item["id"] for item in reports}
+    core_by_id = {item["id"]: item for item in unresolved}
+    report_by_id = {item["id"]: item for item in reports}
     suggestions = []
     for match in parsed.get("matches", []) if isinstance(parsed, dict) else []:
         if not isinstance(match, dict):
@@ -155,9 +210,21 @@ async def _suggest_intake_matches(documents: dict[str, dict]) -> list[dict]:
             confidence = float(match.get("confidence", 0))
         except (TypeError, ValueError):
             confidence = 0
-        if (core_id not in core_ids or report_id not in report_ids or not match.get("same_product")
+        if (core_id not in core_by_id or report_id not in report_by_id or not match.get("same_product")
                 or confidence < 0.75):
             continue
+        core_doc = core_by_id[core_id]
+        report_doc = report_by_id[report_id]
+        if core_doc.get("role") == "prospectus":
+            expected_period = _intake_portfolio_period_end(core_doc.get("metadata") or {})
+            actual_period = _intake_report_period_end(report_doc.get("metadata") or {})
+            if expected_period and actual_period and expected_period != actual_period:
+                continue
+        elif core_doc.get("role") == "product_summary":
+            compiled_date = _intake_date(core_doc.get("metadata") or {})
+            send_date = _intake_report_send_date(report_doc.get("metadata") or {})
+            if compiled_date and send_date and compiled_date < send_date:
+                continue
         suggestions.append({"core_file_id": core_id, "periodic_file_id": report_id,
                             "same_product": True, "confidence": confidence,
                             "reason": str(match.get("reason") or "AI 根据基金信息和报告日期建议关联")[:120]})
@@ -219,12 +286,17 @@ class BatchTaskGroup(BaseModel):
     core_file_id: str = Field(min_length=1, max_length=12)
     periodic_file_id: str = Field(min_length=1, max_length=12)
     prospectus_file_id: str | None = Field(default=None, max_length=12)
+    historical_file_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 class BatchTaskSubmit(BaseModel):
     batch_id: str = Field(min_length=16, max_length=80)
     roles: dict[str, Literal["prospectus", "periodic_report", "product_summary", "unknown"]] = Field(default_factory=dict)
     groups: list[BatchTaskGroup] = Field(min_length=1, max_length=50)
+
+
+class BatchJobDeletePayload(BaseModel):
+    job_ids: list[str] = Field(min_length=1, max_length=200)
 
 
 def _expire_intake_batches() -> None:
@@ -384,14 +456,31 @@ async def _prepare_comparison(
     workflow_id: str,
     prospectus: UploadFile,
     periodic_report: UploadFile,
+    historical_reports: list[UploadFile] | None = None,
 ) -> WorkflowContext:
     if workflow_id not in workflow_registry.list_ids():
         raise HTTPException(status_code=404, detail=f"UNKNOWN_WORKFLOW: {workflow_id}")
-    prospectus_content, periodic_content = await asyncio.gather(
-        read_pdf(prospectus), read_pdf(periodic_report)
+    valid_historicals = [item for item in (historical_reports or []) if item is not None and item.filename]
+    loaded = await asyncio.gather(
+        read_pdf(prospectus),
+        read_pdf(periodic_report),
+        *(read_pdf(item) for item in valid_historicals),
     )
+    prospectus_content, periodic_content = loaded[0], loaded[1]
     prospectus_name = Path(prospectus.filename or "招募说明书.pdf").name
     periodic_name = Path(periodic_report.filename or "定期报告.pdf").name
+    historical_entries = [
+        {
+            "role": f"historical_report_{index:03}",
+            "filename": Path(item.filename or f"historical_report_{index:03}.pdf").name,
+            "content": content,
+            "preview_id": _save_preview(
+                Path(item.filename or f"historical_report_{index:03}.pdf").name,
+                content,
+            ),
+        }
+        for index, (item, content) in enumerate(zip(valid_historicals, loaded[2:]), start=1)
+    ]
     rule_snapshot = capture_investment_rule_snapshot()
     return WorkflowContext(
         input_val={
@@ -401,6 +490,7 @@ async def _prepare_comparison(
             "periodic_filename": periodic_name,
             "periodic_content": periodic_content,
             "periodic_preview_id": _save_preview(periodic_name, periodic_content),
+            "historical_reports": historical_entries,
             "rule_snapshot": rule_snapshot,
             "rules_version": rule_snapshot["rules_version"],
         },
@@ -455,6 +545,10 @@ def _job_view(job: dict, include_result: bool = False) -> dict:
     view["trace_url"] = f"/api/jobs/{job.get('job_id')}/trace"
     if include_result and job.get("result") is not None:
         result = dict(job["result"])
+        if job.get("workflow_id") == "prospectus-periodic-comparison":
+            modules = result.get("modules") or []
+            if any("checks" not in module for module in modules):
+                result["modules"] = _restore_investment_checks(job["job_id"], result, modules)
         documents = result.get("documents")
         if isinstance(documents, dict):
             result["documents"] = {
@@ -464,6 +558,42 @@ def _job_view(job: dict, include_result: bool = False) -> dict:
             }
         view["result"] = result
     return view
+
+
+def _restore_investment_checks(job_id: str, result: dict, modules: list[dict]) -> list[dict]:
+    """Rebuild display details from archived facts when the task's rule snapshot is available."""
+    snapshot_path = AUDIT_STORE.artifact_path(job_id, "rules/rule_snapshot.json")
+    if snapshot_path is None:
+        return modules
+    try:
+        archived = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if not isinstance(archived, dict) or archived.get("rules_version") != result.get("rules_version"):
+            return modules
+        active = capture_investment_rule_snapshot()
+        if archived.get("rules_version") != active["rules_version"] or archived.get("files") != active["files"]:
+            return modules
+        documents = {}
+        for role in ("prospectus", "periodic_report"):
+            path = AUDIT_STORE.artifact_path(job_id, f"{role}/verified_result.json")
+            if path is None:
+                return modules
+            facts = json.loads(path.read_text(encoding="utf-8"))
+            documents[role] = {**facts, "document_info": result["documents"][role]["document_info"]}
+        replay = compare_documents(**documents, execution_plans=active["execution_plans"])
+    except (OSError, ValueError, TypeError, KeyError, RuleCompilationError):
+        return modules
+
+    replay_by_rule = {module["rule_id"]: module for module in replay["modules"]}
+    restored = []
+    for module in modules:
+        candidate = replay_by_rule.get(module["rule_id"], {})
+        if ("checks" not in module and "checks" in candidate
+                and all(module.get(key) == candidate[key] for key in (
+                    "status", "differences", "prospectus_rows", "periodic_rows",
+                ))):
+            module = {**module, "checks": candidate["checks"]}
+        restored.append(module)
+    return restored
 
 
 def _update_job(job_id: str, **updates) -> None:
@@ -591,9 +721,13 @@ async def create_comparison_job(
     prospectus: UploadFile = File(...),
     periodic_report: UploadFile = File(...),
     force_refresh: bool = Form(False),
+    historical_reports: list[UploadFile] | None = File(default=None),
 ) -> dict:
+    extra_uploads = historical_reports if isinstance(historical_reports, list) else []
     try:
-        context = await _prepare_comparison("prospectus-periodic-comparison", prospectus, periodic_report)
+        context = await _prepare_comparison(
+            "prospectus-periodic-comparison", prospectus, periodic_report, extra_uploads
+        )
         context.input_val["force_refresh"] = force_refresh
     except HTTPException:
         raise
@@ -611,6 +745,26 @@ async def create_comparison_job(
             if completed_id is None:
                 raise HTTPException(status_code=429, detail="后台核对任务过多，请稍后再提交")
             JOBS.pop(completed_id)
+        historical_entries = context.input_val.get("historical_reports") or []
+        document_names = {
+            "prospectus": context.input_val["prospectus_filename"],
+            "periodic_report": context.input_val["periodic_filename"],
+            **{item["role"]: item["filename"] for item in historical_entries},
+        }
+        stored_inputs = {
+            "prospectus": (
+                context.input_val["prospectus_filename"],
+                context.input_val["prospectus_content"],
+            ),
+            "periodic_report": (
+                context.input_val["periodic_filename"],
+                context.input_val["periodic_content"],
+            ),
+            **{
+                item["role"]: (item["filename"], item["content"])
+                for item in historical_entries
+            },
+        }
         job = {
             "job_id": job_id,
             "run_id": job_id,
@@ -626,24 +780,14 @@ async def create_comparison_job(
             "steps": {"preflight": "queued", "prospectus": "queued", "periodic_report": "queued", "comparison": "queued"},
             "error": None,
             "result": None,
-            "document_names": {"prospectus": context.input_val["prospectus_filename"],
-                               "periodic_report": context.input_val["periodic_filename"]},
+            "document_names": document_names,
         }
         context.trace_callback = lambda item: _record_task_trace(job_id, item)
         try:
             AUDIT_STORE.create_task(
                 job_id,
                 job,
-                {
-                    "prospectus": (
-                        context.input_val["prospectus_filename"],
-                        context.input_val["prospectus_content"],
-                    ),
-                    "periodic_report": (
-                        context.input_val["periodic_filename"],
-                        context.input_val["periodic_content"],
-                    ),
-                },
+                stored_inputs,
                 _runtime_trace_info(),
             )
         except Exception as exc:
@@ -775,6 +919,11 @@ async def preview_upload_batch(
             "report_subtype": metadata.get("report_subtype"),
             "date_interval": metadata.get("display_date_interval") or metadata.get("date_interval"),
             "date_label": metadata.get("display_date_label") or metadata.get("date_label"),
+            "report_send_date_interval": metadata.get("report_send_date_interval"),
+            "report_send_date_quote": metadata.get("report_send_date_quote"),
+            "portfolio_period_end_interval": metadata.get("portfolio_period_end_interval"),
+            "portfolio_period_end_quote": metadata.get("portfolio_period_end_quote"),
+            "portfolio_report_subtype": metadata.get("portfolio_report_subtype"),
         })
     if not documents:
         raise HTTPException(status_code=400, detail="请先选择 PDF 文件")
@@ -832,10 +981,38 @@ async def submit_upload_batch(payload: BatchTaskSubmit) -> dict:
             if group.core_file_id == group.periodic_file_id:
                 raise ValueError("核心文件和定期报告不能是同一个文件")
             if group.workflow == "investment":
+                prospectus_period = _intake_portfolio_period_end(core.get("metadata") or {})
+                report_period = _intake_report_period_end(periodic.get("metadata") or {})
+                if prospectus_period and report_period and prospectus_period != report_period:
+                    raise ValueError(
+                        f"招募说明书投资组合报告截止日（{prospectus_period}）与定期报告期末（{report_period}）不一致，仅允许匹配同报告期末的定期报告"
+                    )
+                historical_uploads: list[UploadFile] = []
+                seen_historical: set[str] = set()
+                for file_id in group.historical_file_ids:
+                    if file_id in seen_historical:
+                        continue
+                    if file_id in {group.core_file_id, group.periodic_file_id}:
+                        raise ValueError("历年业绩补充报告不能与招募说明书或主定期报告重复")
+                    seen_historical.add(file_id)
+                    extra = selected_document(file_id, "periodic_report")
+                    historical_uploads.append(
+                        UploadFile(filename=extra["filename"], file=BytesIO(extra["content"]))
+                    )
                 prospectus_upload = UploadFile(filename=core["filename"], file=BytesIO(core["content"]))
                 periodic_upload = UploadFile(filename=periodic["filename"], file=BytesIO(periodic["content"]))
-                job = await create_comparison_job(prospectus_upload, periodic_upload, False)
+                job = await (
+                    create_comparison_job(prospectus_upload, periodic_upload, False, historical_uploads)
+                    if historical_uploads
+                    else create_comparison_job(prospectus_upload, periodic_upload, False)
+                )
             else:
+                compiled_date = _intake_date(core.get("metadata") or {})
+                send_date = _intake_report_send_date(periodic.get("metadata") or {})
+                if compiled_date and send_date and compiled_date < send_date:
+                    raise ValueError(
+                        f"产品概要编制日期（{compiled_date}）必须大于等于定期报告送出日期（{send_date}），仅允许匹配送出日期不晚于编制日期的定期报告"
+                    )
                 prospectus = None
                 if group.prospectus_file_id:
                     if group.prospectus_file_id in {group.core_file_id, group.periodic_file_id}:
@@ -888,13 +1065,44 @@ async def rerun_comparison_job(job_id: str, force_refresh: bool = Query(True)) -
         prospectus_upload = stored_upload("prospectus", "招募说明书.pdf", required=False)
         return await create_product_summary_job(summary_upload, periodic_upload, prospectus_upload)
 
+    if job.get("workflow_id") == "historical-performance-verification":
+        history_roles = sorted(
+            role for role in (job.get("document_names") or {})
+            if role.startswith("historical_report_")
+        )
+        history_uploads = [stored_upload(role, role + ".pdf") for role in history_roles]
+        # The first version of this screen accepted one report and exposed a
+        # separate performance-only result.  A single-report rerun now uses
+        # the normal prospectus/report workflow so its investment modules and
+        # annual-performance module are rendered together.  Keep the original
+        # multi-report workflow for tasks that genuinely contain a report set.
+        if len(history_uploads) == 1:
+            return await create_comparison_job(
+                stored_upload("prospectus", "招募说明书.pdf"),
+                history_uploads[0],
+                force_refresh,
+            )
+        raise HTTPException(
+            status_code=409,
+            detail="该任务是旧版多报告业绩专项，只保留历史结果查看。请在普通核对入口重新上传一份招募说明书和对应定期报告。",
+        )
+
     prospectus_upload = stored_upload("prospectus", "招募说明书.pdf")
     periodic_upload = stored_upload("periodic_report", "定期报告.pdf")
+    extra_roles = sorted(
+        role for role in (job.get("document_names") or {})
+        if role.startswith("historical_report_")
+    )
+    extra_uploads = [
+        item for item in (stored_upload(role, role + ".pdf", required=False) for role in extra_roles)
+        if item is not None
+    ]
+    if extra_uploads:
+        return await create_comparison_job(prospectus_upload, periodic_upload, force_refresh, extra_uploads)
     return await create_comparison_job(prospectus_upload, periodic_upload, force_refresh)
 
 
-@app.delete("/api/jobs/{job_id}")
-async def delete_comparison_job(job_id: str) -> dict:
+def _delete_job_record(job_id: str) -> None:
     with JOB_LOCK:
         job = JOBS.get(job_id)
     if job is None:
@@ -909,7 +1117,29 @@ async def delete_comparison_job(job_id: str) -> dict:
     with JOB_LOCK:
         JOBS.pop(job_id, None)
     AUDIT_STORE.delete_task(job_id)
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_comparison_job(job_id: str) -> dict:
+    _delete_job_record(job_id)
     return {"deleted": True, "job_id": job_id}
+
+
+@app.post("/api/jobs/batch-delete")
+async def batch_delete_comparison_jobs(payload: BatchJobDeletePayload) -> dict:
+    deleted_ids: list[str] = []
+    skipped: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for job_id in payload.job_ids:
+        if job_id in seen:
+            continue
+        seen.add(job_id)
+        try:
+            _delete_job_record(job_id)
+            deleted_ids.append(job_id)
+        except HTTPException as exc:
+            skipped.append({"job_id": job_id, "reason": str(exc.detail)})
+    return {"deleted_ids": deleted_ids, "skipped": skipped}
 
 
 @app.get("/api/jobs")
@@ -957,13 +1187,19 @@ async def query_comparison_tasks(
             if (start_date and local_date < start_date) or (end_date and local_date > end_date):
                 continue
         if report_start or report_end:
-            try:
-                report_interval = (job.get("document_dates") or {}).get("periodic_report") or {}
-                interval_start = date.fromisoformat(str(report_interval["start"]))
-                interval_end = date.fromisoformat(str(report_interval.get("end") or report_interval["start"]))
-            except (ValueError, TypeError, KeyError):
-                continue
-            if (report_end and interval_start > report_end) or (report_start and interval_end < report_start):
+            report_dates = ((role, interval) for role, interval in (job.get("document_dates") or {}).items()
+                            if role == "periodic_report" or role.startswith("historical_report_"))
+            overlaps = False
+            for _, interval in report_dates:
+                try:
+                    interval_start = date.fromisoformat(str(interval["start"]))
+                    interval_end = date.fromisoformat(str(interval.get("end") or interval["start"]))
+                except (ValueError, TypeError, KeyError):
+                    continue
+                if (not report_end or interval_start <= report_end) and (not report_start or interval_end >= report_start):
+                    overlaps = True
+                    break
+            if not overlaps:
                 continue
         matches.append(job)
     offset = (page - 1) * page_size
@@ -1041,7 +1277,7 @@ async def render_page(preview_id: str, page_number: int, scale: float = 1.5) -> 
 
 @app.get("/api/jobs/{job_id}/documents/{document_role}/pages/{page_number}/image")
 async def render_job_page(job_id: str, document_role: str, page_number: int, scale: float = 1.5) -> Response:
-    if document_role not in {"prospectus", "periodic_report", "product_summary", "annual_report"}:
+    if document_role not in {"prospectus", "periodic_report", "product_summary", "annual_report"} and not re.fullmatch(r"historical_report_\d{3}", document_role):
         raise HTTPException(status_code=404, detail="任务文档不存在")
     try:
         pdf_path = AUDIT_STORE.artifact_path(job_id, f"inputs/{document_role}.pdf")

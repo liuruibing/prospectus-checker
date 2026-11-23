@@ -605,7 +605,7 @@ def convert_pdf_bytes(content: bytes, include_assets: bool = True) -> dict:
             for i, bbox in enumerate(page["images"], 1):
                 name = f"assets/p{page['page']:04d}-image{i}.png"
                 if include_assets:
-                    assets[name] = native.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), clip=pymupdf.Rect(bbox), alpha=False).tobytes("png")
+                    assets[name] = native.get_pixmap(matrix=pymupdf.Matrix(2.0, 2.0), clip=pymupdf.Rect(bbox), alpha=False).tobytes("png")
     document = assemble(layout)
     for event in document["events"]:
         if event.get("kind") == "separate_tables" or event.get("uncertain_row"):

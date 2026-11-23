@@ -27,7 +27,7 @@ def _atomic_json(path: Path, value: Any) -> None:
 class TaskAuditStore:
     """Local, human-readable audit records for background comparison jobs."""
 
-    SUMMARY_VERSION = 3
+    SUMMARY_VERSION = 4
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root).expanduser().resolve()
@@ -87,6 +87,9 @@ class TaskAuditStore:
         fields = ("job_id", "run_id", "workflow_id", "historical", "status", "stage", "message", "created_at", "started_at", "updated_at", "completed_at", "steps", "error")
         summary = {key: job.get(key) for key in fields}
         summary["_summary_version"] = self.SUMMARY_VERSION
+        if summary["workflow_id"] == "historical-performance-verification":
+            summary["workflow_id"] = "prospectus-periodic-comparison"
+            summary["legacy_performance_result"] = True
         result = job.get("result") or {}
         preflight = result.get("preflight") or {}
         documents = result.get("documents") or {}
@@ -102,8 +105,10 @@ class TaskAuditStore:
             if document.get("filename"):
                 names[role] = document["filename"]
         document_dates = {}
-        for role in ("prospectus", "periodic_report", "product_summary"):
-            preflight_info = preflight.get(role) or {}
+        document_roles = ["prospectus", "periodic_report", "product_summary"]
+        document_roles.extend(role for role in names if role.startswith("historical_report_"))
+        for role in dict.fromkeys(document_roles):
+            preflight_info = preflight.get(role) or (preflight.get("documents") or {}).get(role) or {}
             document_info = (documents.get(role) or {}).get("document_info") or {}
             interval = (
                 preflight_info.get("display_date_interval")
@@ -111,7 +116,7 @@ class TaskAuditStore:
                 or preflight_info.get("date_interval")
                 or document_info.get("date_interval")
             )
-            if not isinstance(interval, dict) and role == "periodic_report":
+            if not isinstance(interval, dict) and (role == "periodic_report" or role.startswith("historical_report_")):
                 period_end = document_info.get("period_end")
                 if period_end:
                     interval = {"start": period_end, "end": period_end}
@@ -139,7 +144,7 @@ class TaskAuditStore:
                 )
                 if unresolved_diffs:
                     unresolved_count += unresolved_diffs
-                elif module.get("status") not in {None, "MATCH", "MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE", "RANK_ORDER_CHANGED"}:
+                elif module.get("status") not in {None, "MATCH", "NOT_APPLICABLE", "MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE", "RANK_ORDER_CHANGED"}:
                     unresolved_count += 1
         summary.update(document_names=names, document_dates=document_dates, fund_name=info.get("fund_name"), fund_code=info.get("fund_code"),
                        result_status=result.get("status"), difference_count=result.get("difference_count"),

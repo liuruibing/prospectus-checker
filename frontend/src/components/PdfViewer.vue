@@ -2,7 +2,7 @@
   <section class="pdf-pane">
     <header class="pdf-toolbar">
       <div class="pdf-title-block">
-        <span class="pdf-title-icon" :class="roleName">{{ roleName === 'prospectus' ? '招' : '报' }}</span>
+        <span class="pdf-title-icon" :class="roleName === 'prospectus' ? 'prospectus' : 'periodic_report'">{{ roleName === 'prospectus' ? '招' : '报' }}</span>
         <div><strong>{{ title }}</strong><small>{{ documentInfo ? documentInfo.filename : '尚未上传 PDF' }}</small></div>
       </div>
       <div v-if="documentInfo" class="pdf-controls" role="toolbar" aria-label="PDF 阅读控制">
@@ -76,8 +76,8 @@
     </header>
 
     <div ref="scroller" class="pdf-scroll-area" @scroll.passive="updateCurrentPage">
-      <template v-if="documentInfo && documentInfo.preview_id && pageCount">
-        <article v-for="page in pages" :key="documentInfo.preview_id + ':' + page" class="pdf-page-card" :data-page="page">
+      <template v-if="documentInfo && documentKey && pageCount">
+        <article v-for="page in pages" :key="documentKey + ':' + page" class="pdf-page-card" :data-page="page">
           <div class="pdf-page-caption">
             <span>{{ title }}</span><span>第 {{ page }} 页 / 共 {{ pageCount }} 页</span>
           </div>
@@ -141,6 +141,13 @@ export default {
     previewId() {
       return this.documentInfo && this.documentInfo.preview_id || "";
     },
+    documentKey() {
+      if (!this.documentInfo) return "";
+      const taskId = this.documentInfo.task_id || "";
+      const previewId = this.documentInfo.preview_id || "";
+      if (!taskId && !previewId) return "";
+      return [taskId, previewId, this.roleName].join(":");
+    },
     locatedEvidenceCount() {
       return this.evidences.filter((evidence) => evidence.status === "LOCATED" && evidence.bbox && evidence.page_width && evidence.page_height).length;
     },
@@ -159,7 +166,7 @@ export default {
     },
   },
   watch: {
-    previewId() {
+    documentKey() {
       this.currentPage = 1;
       this.pageInput = "1";
       this.imageErrors = {};
@@ -170,6 +177,7 @@ export default {
     },
     evidences: {
       deep: true,
+      immediate: true,
       handler(value) {
         const evidence = value.find((item) => (
           item && item.page && item.status === "LOCATED" &&

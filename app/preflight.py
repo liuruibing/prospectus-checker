@@ -8,13 +8,18 @@ from typing import Any
 
 import pymupdf as fitz
 
+from app.extraction import extract_prospectus_portfolio_period
+
 
 _DATE_PATTERN = re.compile(
-    r"(?P<year>20\d{2}|[〇零一二三四五六七八九]{4})\s*年\s*"
+    r"(?P<year>20\d{2}|[〇零0oO一二三四五六七八九]{4})\s*年\s*"
     r"(?P<month>\d{1,2}|[一二三四五六七八九十]{1,3})\s*月"
     r"(?:\s*(?P<day>\d{1,2}|[一二三四五六七八九十]{1,3})\s*日)?"
 )
-_CHINESE_DIGITS = {"〇": 0, "零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_CHINESE_DIGITS = {
+    "〇": 0, "零": 0, "0": 0, "o": 0, "O": 0,
+    "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+}
 
 
 def _chinese_integer(value: str) -> int:
@@ -79,35 +84,42 @@ def _matching_date(
 
 def _extract_product_name(text: str, role: str) -> str | None:
     compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
+    fund_suffix = r"(?:\((?:LOF|QDII|FOF|MOM|ETF)\))?"
     if role == "product_summary":
-        match = re.search(r"(?P<name>[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9（）()·]{2,100}?基金)(?:\([^)]{1,40}\))?(?:基金)?产品资料概要", compact)
+        match = re.search(
+            rf"(?P<name>[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9（）()·]{{2,100}}?基金{fund_suffix})"
+            r"(?:\([^)]{1,40}\))*(?:基金)?产品资料概要",
+            compact,
+        )
         return match.group("name") if match else None
     if role == "prospectus":
         lines = [re.sub(r"\s+", "", unicodedata.normalize("NFKC", line)) for line in text.splitlines()]
         lines = [line for line in lines if line]
+        end_rx = re.compile(r"基金(?:\([A-Za-z0-9/+\-]{1,12}\))?$")
         for index, line in enumerate(lines):
             marker = line.find("招募说明书")
             if marker < 0:
                 continue
             title_prefix = line[:marker].removesuffix("更新的").removesuffix("更新")
-            if title_prefix.endswith("基金") and len(title_prefix) >= 4:
+            if end_rx.search(title_prefix) and len(title_prefix) >= 4:
                 return title_prefix
             # Many prospectus covers put the fund name and document title on
             # adjacent lines. Prefer that title block over the running header,
             # which may be followed by a page number and manager name.
             if index:
                 previous = lines[index - 1]
-                if previous.endswith("基金") and len(previous) >= 4:
+                if end_rx.search(previous) and len(previous) >= 4:
                     return previous
         wrapped = re.search(
-            r"(?P<name>[\u4e00-\u9fffA-Za-z0-9（）()·]{3,120}?基金)(?:更新的|更新)?招募说明书",
+            rf"(?P<name>[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9（）()·]{{2,120}}?基金{fund_suffix})(?:更新的|更新)?招募说明书",
             compact,
         )
         return wrapped.group("name") if wrapped else None
     if role == "periodic_report":
         match = re.search(
-            r"(?P<name>[\u4e00-\u9fffA-Za-z0-9（）()·]{3,100}?基金)20\d{2}年"
-            r"(?:第[1-4]季度|半年度|年度|中期)?报告",
+            rf"(?P<name>[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9（）()·]{{2,100}}?基金(?:\([A-Za-z0-9/+\-]{{1,12}}\))?)"
+            r"(?:20\d{2}|二[〇零0oO][一二三四五六七八九0-9]{2})年"
+            r"(?:第\s*[1-4一二三四]\s*季度|半年度|年度|中期)?报告",
             compact,
         )
         return match.group("name") if match else None
@@ -237,10 +249,14 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
     filename_date = _filename_date_candidate(filename)
     document = fitz.open(stream=content, filetype="pdf")
     try:
-        first_pages = [document[index].get_text() for index in range(min(3, document.page_count))]
+        page_records = [
+            {"page": index + 1, "text": document[index].get_text()}
+            for index in range(document.page_count)
+        ]
+        first_pages = [record["text"] for record in page_records[:3]]
         cover_text = first_pages[0] if first_pages else ""
         first_text = "\n".join(first_pages)
-        all_text = "\n".join(page.get_text() for page in document)
+        all_text = "\n".join(record["text"] for record in page_records)
         compact_first_text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", first_text))
         compact_cover_text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", cover_text))
         auto_mode = role == "auto"
@@ -263,8 +279,9 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             and not prospectus_title_precedes_summary
         )
         is_periodic_report = bool(re.search(
-            r"20\d{2}年(?:第[1-4]季度|半年度|中期|年度)报告", classification_text
-        )) and not is_product_summary
+            r"(?:20\d{2}|二[〇零0oO][一二三四五六七八九0-9]{2})年(?:第\s*[1-4一二三四]\s*季度|半年度|中期|年度)报告",
+            classification_text,
+        )) and not is_product_summary and not filename_is_prospectus
         is_prospectus = filename_is_prospectus or (
             "招募说明书" in classification_text
             and not is_product_summary
@@ -285,6 +302,9 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             else "quarterly" if re.search(r"季度报告", compact_cover_text)
             else None
         )
+        quarter_match = re.search(r"第\s*([1-4一二三四])\s*季度", compact_cover_text)
+        quarter_digit = {"一": "1", "二": "2", "三": "3", "四": "4"}
+        report_quarter = quarter_digit.get(quarter_match.group(1), quarter_match.group(1)) if quarter_match else None
         name_text = first_text if auto_mode else cover_text
         full_product_name = (
             _extract_product_name(name_text, role)
@@ -303,20 +323,70 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
         identity_codes = _extract_fund_codes(identity_text)
         if code and code not in identity_codes:
             identity_codes.insert(0, code)
+        portfolio_period_end_interval: tuple[date, date] | None = None
+        portfolio_period_end_quote: str | None = None
+        portfolio_report_subtype: str | None = None
         if role == "prospectus":
             date_interval, date_quote = _matching_date(first_text if auto_mode else cover_text)
             date_label = "招募说明书封面日期"
+            if not date_interval:
+                opening_text = "\n".join(record["text"] for record in page_records[:8])
+                date_interval, date_quote = _matching_date(
+                    opening_text,
+                    labels=(
+                        "其他所载内容截止日为",
+                        "所载内容截止日为",
+                        "所载内容截止日期为",
+                        "内容截止日为",
+                        "更新日期",
+                        "公告日期",
+                    ),
+                    allow_unlabelled=False,
+                )
+                if not date_interval:
+                    date_interval, date_quote = _matching_date(
+                        opening_text,
+                        labels=("主要人员情况截止日为",),
+                        allow_unlabelled=False,
+                    )
+                if date_interval:
+                    date_label = "招募说明书内容截止日"
             display_date_interval, display_date_quote, display_date_label = (
                 date_interval, date_quote, date_label
             )
             report_send_date_interval = None
             report_send_date_quote = None
+            portfolio_info = extract_prospectus_portfolio_period(page_records)
+            if portfolio_info:
+                try:
+                    parsed_portfolio_date = date.fromisoformat(portfolio_info["value"])
+                    portfolio_period_end_interval = (parsed_portfolio_date, parsed_portfolio_date)
+                    portfolio_period_end_quote = portfolio_info.get("quote")
+                    portfolio_report_subtype = portfolio_info.get("report_subtype")
+                except ValueError:
+                    pass
         elif role == "product_summary":
-            date_interval, date_quote = _matching_date(first_text, labels=("编制日期", "编制日", "送出日期"))
+            date_interval, date_quote = _matching_date(
+                first_text,
+                labels=("编制日期", "编制日", "送出日期"),
+                allow_unlabelled=False,
+            )
+            if not date_interval:
+                for match in _DATE_PATTERN.finditer(cover_text):
+                    parsed = _date_interval(match)
+                    if parsed:
+                        date_interval = parsed
+                        date_quote = match.group(0)
+                        break
+            if not date_interval:
+                date_interval, date_quote = _matching_date(first_text)
             date_label = "产品资料概要编制日期"
             display_date_interval, display_date_quote, display_date_label = date_interval, date_quote, date_label
-            report_send_date_interval = None
-            report_send_date_quote = None
+            report_send_date_interval, report_send_date_quote = _matching_date(
+                first_text,
+                labels=("送出日期", "公告日期", "披露日期"),
+                allow_unlabelled=False,
+            )
         elif role == "periodic_report":
             period_text = first_text if auto_mode else cover_text
             send_date_labels = (
@@ -368,6 +438,7 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             "is_periodic_report": is_periodic_report,
             "detected_roles": detected_roles,
             "report_subtype": report_subtype,
+            "report_quarter": report_quarter,
             "fund_name": product_name,
             "fund_full_name": full_product_name,
             "fund_short_name": short_product_name,
@@ -383,6 +454,9 @@ def _document_metadata(filename: str, content: bytes, role: str) -> dict[str, An
             "version_date_precision": "day" if version_date_interval and version_date_interval[0] == version_date_interval[1] else None,
             "report_send_date_interval": _serialize_interval(report_send_date_interval),
             "report_send_date_quote": report_send_date_quote,
+            "portfolio_period_end_interval": _serialize_interval(portfolio_period_end_interval),
+            "portfolio_period_end_quote": portfolio_period_end_quote,
+            "portfolio_report_subtype": portfolio_report_subtype,
             "display_date_label": display_date_label,
             "display_date_interval": _serialize_interval(display_date_interval),
             "display_date_quote": display_date_quote,
@@ -475,4 +549,32 @@ def preflight_summary_documents(payload: dict[str, Any]) -> dict[str, Any]:
         "product_summary": summary,
         "periodic_report": report,
         "prospectus": prospectus,
+    }
+
+
+def preflight_historical_documents(payload: dict[str, Any]) -> dict[str, Any]:
+    """Read role and identity metadata for a prospectus plus independent reports.
+
+    This performs document-type checks only. Report subtype, applicable dates,
+    and source eligibility remain declared by the active Markdown execution
+    plan and are evaluated by the comparison layer.
+    """
+    documents = payload.get("documents")
+    if not isinstance(documents, dict) or "prospectus" not in documents:
+        raise ValueError("HISTORICAL_PROSPECTUS_REQUIRED")
+    if len(documents) < 2:
+        raise ValueError("HISTORICAL_REPORT_REQUIRED")
+    results = {}
+    for role, item in documents.items():
+        if role != "prospectus" and not role.startswith("historical_report_"):
+            raise ValueError("HISTORICAL_DOCUMENT_ROLE_INVALID")
+        normalized_role = "prospectus" if role == "prospectus" else "periodic_report"
+        metadata = _document_metadata(str(item["filename"]), item["content"], normalized_role)
+        is_valid = metadata.get("is_prospectus") if role == "prospectus" else metadata.get("is_periodic_report")
+        results[role] = {**metadata, "blocked": not bool(is_valid)}
+    return {
+        "status": "READY" if all(not item["blocked"] for item in results.values()) else "WRONG_DOCUMENT_TYPE",
+        "blocked": any(item["blocked"] for item in results.values()),
+        "message": None if all(not item["blocked"] for item in results.values()) else "文件类别与历年业绩核对要求不符。",
+        "documents": results,
     }

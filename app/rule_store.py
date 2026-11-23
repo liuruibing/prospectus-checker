@@ -16,6 +16,7 @@ RULE_ROOT = Path(__file__).resolve().parents[1] / "rules"
 RULE_SCOPES = {
     "investment": "招募说明书",
     "product_summary": "产品资料概要",
+    "historical_performance": "历年业绩",
 }
 MAX_RULE_BYTES = 512_000
 

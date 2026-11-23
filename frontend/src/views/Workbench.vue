@@ -1,5 +1,6 @@
 <template>
   <product-summary-workbench v-if="activeJob && activeJob.workflow_id === 'product-summary-verification'" :task-id="$route.params.taskId" />
+  <historical-performance-workbench v-else-if="activeJob && activeJob.legacy_performance_result" :task-id="$route.params.taskId" />
   <div v-else class="workbench-page">
     <app-topbar>
       <template slot="actions">
@@ -94,50 +95,95 @@
 
           <div class="findings-subheading">
             <span>核对模块</span>
-            <span v-if="result" class="difference-total">差异 {{ result.difference_count || 0 }} 项</span>
+            <span v-if="result" class="difference-total">差异 {{ result.difference_count || 0 }} 项<template v-if="reviewCount > 0">，<span class="review-count">待复核 {{ reviewCount }} 项</span></template></span>
           </div>
           <div v-if="result" class="module-list">
             <section
-              v-for="group in filteredModules"
-              :key="group.module.rule_id"
+              v-for="section in groupedModules"
+              :key="section.key"
               class="module-card"
-              :class="{ expanded: expandedModuleIndex === group.moduleIndex }"
+              :class="{ expanded: expandedGroupKey === section.key }"
             >
               <button
                 type="button"
                 class="module-toggle"
-                :aria-expanded="expandedModuleIndex === group.moduleIndex"
-                @click="toggleModule(group.moduleIndex)"
+                :aria-expanded="expandedGroupKey === section.key"
+                @click="toggleGroup(section.key)"
               >
-                <span class="status-dot" :class="statusClass(group.module.status)" />
-                <span class="module-title">{{ group.module.title }}</span>
-                <span class="module-count">{{ group.visibleDifferences.length ? group.visibleDifferences.length + ' 项' : moduleStatusLabel(group.module) }}</span>
-                <i :class="expandedModuleIndex === group.moduleIndex ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" />
+                <span class="status-dot" :class="statusClass(section.status)" />
+                <span class="module-title">{{ section.title }}</span>
+                <span class="module-count">{{ section.countLabel }}</span>
+                <i :class="expandedGroupKey === section.key ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" />
               </button>
-              <div v-if="expandedModuleIndex === group.moduleIndex" class="module-details">
-                <div
-                  v-for="item in group.visibleDifferences"
-                  :key="item.difference.row_id + ':' + item.difference.field_key + ':' + item.differenceIndex"
-                  class="summary-item"
-                  :class="[{ selected: selectedModuleIndex === group.moduleIndex && selectedDifferenceIndex === item.differenceIndex }, statusClass(item.difference.status)]"
-                >
-                  <button type="button" class="summary-item-main" @click="selectDifference(group.moduleIndex, item.differenceIndex)">
-                    <span class="status-dot" :class="statusClass(item.difference.status)" />
-                    <span class="summary-item-body">
-                      <strong>{{ (item.difference.row_label || '模块') + ' / ' + (item.difference.field_label || item.difference.field_key) }}</strong>
-                      <span>{{ valueText(item.difference.prospectus) }} <i class="el-icon-right" /> {{ valueText(item.difference.periodic_report) }}</span>
-                      <small>{{ differenceReason(item.difference, group.module) }}</small>
-                    </span>
-                    <el-tag v-if="item.difference.status !== 'NOT_CHECKED'" size="mini" :type="tagType(item.difference.status)">{{ statusLabel(item.difference.status) }}</el-tag>
-                  </button>
-                  <div v-if="resultCategory(item.difference.status) === 'review'" class="summary-item-actions">
-                    <button type="button" class="draft-exception-button" @click="draftException(item.difference)">草拟例外</button>
+              <div v-if="expandedGroupKey === section.key" class="module-details">
+                <template v-if="section.singleModule">
+                  <div
+                    v-for="item in section.modules[0].visibleDifferences"
+                    :key="item.difference.row_id + ':' + item.difference.field_key + ':' + item.differenceIndex"
+                    class="summary-item"
+                    :class="[{ selected: selectedModuleIndex === section.modules[0].moduleIndex && selectedDifferenceIndex === item.differenceIndex }, statusClass(item.difference.status)]"
+                  >
+                    <button type="button" class="summary-item-main" @click="selectDifference(section.modules[0].moduleIndex, item.differenceIndex)">
+                      <span class="status-dot" :class="statusClass(item.difference.status)" />
+                      <span class="summary-item-body">
+                        <strong>{{ (item.difference.row_label || '模块') + ' / ' + (item.difference.field_label || item.difference.field_key) }}</strong>
+                        <span>{{ valueText(item.difference.prospectus) }} <i class="el-icon-right" /> {{ valueText(item.difference.periodic_report) }}</span>
+                        <small v-if="item.difference.status !== 'MATCH'">{{ differenceReason(item.difference, section.modules[0].module) }}</small>
+                      </span>
+                      <el-tag v-if="item.difference.status !== 'NOT_CHECKED'" size="mini" :type="tagType(item.difference.status)">{{ statusLabel(item.difference.status) }}</el-tag>
+                    </button>
+                    <div v-if="resultCategory(item.difference.status) === 'review'" class="summary-item-actions">
+                      <button type="button" class="draft-exception-button" @click="draftException(item.difference)">草拟例外</button>
+                    </div>
                   </div>
-                </div>
-                <p v-if="!group.visibleDifferences.length" class="module-empty">{{ group.module.review_message || (group.module.status === 'MATCH' ? '本章节核对一致。' : moduleMessage(group.module)) }}</p>
+                  <p v-if="section.modules[0].module.review_message || !section.modules[0].visibleDifferences.length" class="module-empty">{{ section.modules[0].module.review_message || (section.modules[0].module.status === 'MATCH' ? '本章节核对一致。' : moduleMessage(section.modules[0].module)) }}</p>
+                </template>
+                <template v-else>
+                  <div
+                    v-for="group in section.modules"
+                    :key="group.module.rule_id"
+                    class="submodule-card"
+                    :class="{ expanded: expandedModuleIndex === group.moduleIndex }"
+                  >
+                    <button
+                      type="button"
+                      class="submodule-toggle"
+                      :aria-expanded="expandedModuleIndex === group.moduleIndex"
+                      @click="toggleModule(group.moduleIndex)"
+                    >
+                      <span class="status-dot" :class="statusClass(group.module.status)" />
+                      <span class="submodule-title">{{ group.module.title }}</span>
+                      <span class="module-count">{{ moduleCountLabel(group) }}</span>
+                      <i :class="expandedModuleIndex === group.moduleIndex ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" />
+                    </button>
+                    <div v-if="expandedModuleIndex === group.moduleIndex" class="submodule-details">
+                      <div
+                        v-for="item in group.visibleDifferences"
+                        :key="item.difference.row_id + ':' + item.difference.field_key + ':' + item.differenceIndex"
+                        class="summary-item"
+                        :class="[{ selected: selectedModuleIndex === group.moduleIndex && selectedDifferenceIndex === item.differenceIndex }, statusClass(item.difference.status)]"
+                      >
+                        <button type="button" class="summary-item-main" @click="selectDifference(group.moduleIndex, item.differenceIndex)">
+                          <span class="status-dot" :class="statusClass(item.difference.status)" />
+                          <span class="summary-item-body">
+                            <strong>{{ (item.difference.row_label || '模块') + ' / ' + (item.difference.field_label || item.difference.field_key) }}</strong>
+                            <span>{{ valueText(item.difference.prospectus) }} <i class="el-icon-right" /> {{ valueText(item.difference.periodic_report) }}</span>
+                            <small v-if="item.difference.document_role && item.difference.document_role !== 'periodic_report'">参考报告：{{ item.difference.document_filename || item.difference.document_role }}</small>
+                            <small v-if="item.difference.status !== 'MATCH'">{{ differenceReason(item.difference, group.module) }}</small>
+                          </span>
+                          <el-tag v-if="item.difference.status !== 'NOT_CHECKED'" size="mini" :type="tagType(item.difference.status)">{{ statusLabel(item.difference.status) }}</el-tag>
+                        </button>
+                        <div v-if="resultCategory(item.difference.status) === 'review'" class="summary-item-actions">
+                          <button type="button" class="draft-exception-button" @click="draftException(item.difference)">草拟例外</button>
+                        </div>
+                      </div>
+                      <p v-if="group.module.review_message || !group.visibleDifferences.length" class="module-empty">{{ group.module.review_message || (group.module.status === 'MATCH' ? '本章节核对一致。' : moduleMessage(group.module)) }}</p>
+                    </div>
+                  </div>
+                </template>
               </div>
             </section>
-            <el-empty v-if="!filteredModules.length" description="该筛选条件下没有核对项" />
+            <el-empty v-if="!groupedModules.length" description="该筛选条件下没有核对项" />
           </div>
 
           <el-empty
@@ -163,9 +209,9 @@
           />
           <pdf-viewer
             ref="periodicReportViewer"
-            role-name="periodic_report"
-            title="定期报告"
-            :document-info="result && result.documents.periodic_report"
+            :role-name="activePeriodicRole"
+            :title="activePeriodicTitle"
+            :document-info="result && result.documents && result.documents[activePeriodicRole]"
             :evidences="periodicReportEvidences"
           />
         </section>
@@ -183,6 +229,7 @@ import AppTopbar from "../components/AppTopbar.vue";
 import PdfViewer from "../components/PdfViewer.vue";
 import UploadDialog from "../components/UploadDialog.vue";
 import ProductSummaryWorkbench from "./ProductSummaryWorkbench.vue";
+import HistoricalPerformanceWorkbench from "./HistoricalPerformanceWorkbench.vue";
 
 const STATUS_LABELS = {
   MATCH: "一致",
@@ -197,11 +244,12 @@ const STATUS_LABELS = {
   MISSING_FIELD: "字段缺失",
   RANK_ORDER_CHANGED: "披露顺序变化",
   UNRESOLVED_ROW_IDENTITY: "行身份待复核",
+  NOT_APPLICABLE: "不适用",
 };
 
 export default {
   name: "ComparisonWorkbench",
-  components: { AppTopbar, PdfViewer, UploadDialog, ProductSummaryWorkbench },
+  components: { AppTopbar, PdfViewer, UploadDialog, ProductSummaryWorkbench, HistoricalPerformanceWorkbench },
   data() {
     return {
       activeJob: null,
@@ -210,7 +258,8 @@ export default {
       detailError: "",
       result: null,
       uploadVisible: false,
-      statusFilter: ["difference", "review"],
+      statusFilter: ["all"],
+      expandedGroupKey: null,
       expandedModuleIndex: null,
       selectedModuleIndex: null,
       selectedDifferenceIndex: null,
@@ -267,30 +316,96 @@ export default {
       const metadata = this.documentMetadata("periodic_report");
       return metadata && metadata.display_date_label || "报告期末";
     },
+    reviewCount() {
+      if (!this.result) return 0;
+      if (typeof this.result.unresolved_count === "number") {
+        return this.result.unresolved_count + (this.result.not_checked_count || 0);
+      }
+      const resolvedModuleStatuses = ["MATCH", "NOT_APPLICABLE", "MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE", "RANK_ORDER_CHANGED"];
+      const reviewDiffStatuses = ["UNRESOLVED", "UNRESOLVED_ROW_IDENTITY", "UNRESOLVED_STRUCTURE", "NOT_CHECKED"];
+      return (this.result.modules || []).reduce((total, module) => {
+        const diffs = module && module.differences || [];
+        const reviewDiffs = diffs.filter((item) => reviewDiffStatuses.indexOf(item.status) >= 0).length;
+        if (reviewDiffs) return total + reviewDiffs;
+        if (module && module.status && resolvedModuleStatuses.indexOf(module.status) < 0) return total + 1;
+        return total;
+      }, 0);
+    },
     filteredModules() {
       return (this.result && this.result.modules || []).reduce((groups, module, moduleIndex) => {
-        const differences = (module.differences || []).map((difference, differenceIndex) => ({ difference, differenceIndex }));
+        const differences = (module.checks || module.differences || []).map((difference, differenceIndex) => ({ difference, differenceIndex }));
         const visibleDifferences = differences.filter(({ difference }) =>
           this.matchesStatusFilter(difference.status)
         );
-        if (differences.length) {
-          if (visibleDifferences.length) groups.push({ module, moduleIndex, visibleDifferences });
-        } else if (this.matchesStatusFilter(module.status)) {
-          groups.push({ module, moduleIndex, visibleDifferences: [] });
+        if (visibleDifferences.length ||
+            ((!differences.length || module.review_message) && this.matchesStatusFilter(module.status))) {
+          groups.push({ module, moduleIndex, visibleDifferences });
         }
         return groups;
       }, []);
     },
+    groupedModules() {
+      const portfolio = [];
+      const performance = [];
+      this.filteredModules.forEach((group) => {
+        const ruleId = String(group.module && group.module.rule_id || "");
+        if (ruleId.indexOf("performance.") === 0) {
+          performance.push(group);
+        } else {
+          portfolio.push(group);
+        }
+      });
+      const aggregateStatus = (items) => {
+        const mismatchStatuses = ["MISMATCH", "MISSING_ROW", "MISSING_FIELD", "MISSING_MODULE", "RANK_ORDER_CHANGED"];
+        if (items.some((g) => mismatchStatuses.indexOf(g.module.status) >= 0)) return "MISMATCH";
+        if (items.some((g) => g.module.status !== "MATCH" && g.module.status !== "NOT_APPLICABLE")) return "UNRESOLVED";
+        if (items.every((g) => g.module.status === "NOT_APPLICABLE")) return "NOT_APPLICABLE";
+        return "MATCH";
+      };
+      const sections = [];
+      if (portfolio.length) {
+        const matched = portfolio.filter((g) => g.module.status === "MATCH").length;
+        const label = matched === portfolio.length ? `${portfolio.length} 项一致` : `${portfolio.length} 项（${matched} 项一致）`;
+        sections.push({
+          key: "portfolio",
+          title: "投资组合报告",
+          status: aggregateStatus(portfolio),
+          countLabel: label,
+          modules: portfolio,
+          singleModule: false,
+        });
+      }
+      if (performance.length) {
+        sections.push({
+          key: "performance",
+          title: "本基金本报告期单位基金资产净值增长率与同期业绩比较基准收益率比较表",
+          status: aggregateStatus(performance),
+          countLabel: performance.length === 1 ? this.moduleCountLabel(performance[0]) : `${performance.length} 项`,
+          modules: performance,
+          singleModule: performance.length === 1,
+        });
+      }
+      return sections;
+    },
     selectedDifference() {
       if (this.selectedModuleIndex === null || this.selectedDifferenceIndex === null || !this.result) return null;
       const module = this.result.modules[this.selectedModuleIndex];
-      return module && module.differences[this.selectedDifferenceIndex] || null;
+      return module && (module.checks || module.differences)[this.selectedDifferenceIndex] || null;
+    },
+    activePeriodicRole() {
+      const docs = this.result && this.result.documents;
+      if (!docs) return "periodic_report";
+      const role = this.selectedDifference && this.selectedDifference.document_role;
+      return role && docs[role] ? role : "periodic_report";
+    },
+    activePeriodicTitle() {
+      return this.activePeriodicRole === "periodic_report" ? "定期报告" : "历年补充报告";
     },
     prospectusEvidences() {
       return this.evidenceListFor("prospectus");
     },
     periodicReportEvidences() {
-      return this.evidenceListFor("periodic_report");
+      return this.evidenceListFor("periodic_report", this.activePeriodicRole);
     },
   },
   watch: {
@@ -302,7 +417,8 @@ export default {
       handler() {
         this.result = null;
         this.activeJob = null;
-        this.statusFilter = ["difference", "review"];
+        this.statusFilter = ["all"];
+        this.expandedGroupKey = null;
         this.expandedModuleIndex = this.selectedModuleIndex = this.selectedDifferenceIndex = null;
         this.loadTask();
       },
@@ -361,12 +477,18 @@ export default {
       }
       return `${year}年${month}月`;
     },
-    evidenceListFor(role) {
+    evidenceListFor(role, targetDocumentRole) {
       if (!this.result || this.selectedModuleIndex === null) return [];
       const module = this.result.modules[this.selectedModuleIndex];
       if (!module) return [];
-      const differences = this.selectedDifference ? [this.selectedDifference] : module.differences;
+      const rawDifferences = this.selectedDifference ? [this.selectedDifference] : module.checks || module.differences;
+      const differences = role === "periodic_report" && targetDocumentRole
+        ? rawDifferences.filter((item) => (item.document_role || "periodic_report") === targetDocumentRole)
+        : rawDifferences;
       if (!differences.length) {
+        if (role === "periodic_report" && targetDocumentRole && targetDocumentRole !== "periodic_report") {
+          return [];
+        }
         const disclosures = module[role === "prospectus" ? "prospectus_disclosures" : "periodic_disclosures"] || [];
         return disclosures.filter((item) => item.evidence).map((item, index) => Object.assign({}, item.evidence, {
           difference_status: module.status,
@@ -487,9 +609,15 @@ export default {
       return STATUS_LABELS[status] || status || "待复核";
     },
     moduleStatusLabel(module) {
+      if (module.status === "NOT_APPLICABLE") return "不适用";
       if (module.status === "UNRESOLVED_STRUCTURE" && module.disclosure_ranges) return "口径待确认";
       if (module.status === "UNRESOLVED_STRUCTURE" && !module.differences.length) return "证据待复核";
       return this.statusLabel(module.status);
+    },
+    moduleCountLabel(group) {
+      const count = group.visibleDifferences.length;
+      if (!count) return this.moduleStatusLabel(group.module);
+      return (group.module.status === "MATCH" ? "一致 " : "") + count + " 项";
     },
     resultCategory(status) {
       if (status === "MATCH") return "match";
@@ -501,7 +629,9 @@ export default {
       return !this.statusFilter.length || this.statusFilter.includes("all") || this.statusFilter.includes(this.resultCategory(status));
     },
     normalizeStatusFilter(value) {
-      if (value.includes("all") && value.length > 1) this.statusFilter = ["all"];
+      if (value.length > 1 && value.includes("all")) {
+        this.statusFilter = value[value.length - 1] === "all" ? ["all"] : value.filter((status) => status !== "all");
+      }
     },
     statusClass(status) {
       return String(status || "").toLowerCase().replace(/_/g, "-");
@@ -534,6 +664,9 @@ export default {
     clearFindingSelection() {
       this.expandedModuleIndex = this.selectedModuleIndex = this.selectedDifferenceIndex = null;
     },
+    toggleGroup(key) {
+      this.expandedGroupKey = this.expandedGroupKey === key ? null : key;
+    },
     toggleModule(moduleIndex) {
       this.expandedModuleIndex = this.expandedModuleIndex === moduleIndex ? null : moduleIndex;
       this.selectedModuleIndex = moduleIndex;
@@ -546,9 +679,15 @@ export default {
     navigateToModule(moduleIndex, role) {
       if (!this.result) return;
       const module = this.result.modules[moduleIndex];
+      const checks = (module && (module.checks || module.differences)) || [];
+      const targetDocRole = role === "periodic_report" ? this.activePeriodicRole : role;
+      const checkEvidence = checks
+        .filter((item) => role !== "periodic_report" || (item.document_role || "periodic_report") === targetDocRole)
+        .map((item) => item && item[role] && item[role].evidence)
+        .find((item) => item && item.page);
       const rows = module && module[role === "prospectus" ? "prospectus_rows" : "periodic_rows"] || [];
       const declarations = module && module[role === "prospectus" ? "prospectus_disclosures" : "periodic_disclosures"] || [];
-      const evidence = rows.reduce((found, row) => {
+      const evidence = checkEvidence || rows.reduce((found, row) => {
         if (found) return found;
         const rowEvidence = row.row_evidence || row.rank_evidence;
         if (rowEvidence && rowEvidence.page) return rowEvidence;

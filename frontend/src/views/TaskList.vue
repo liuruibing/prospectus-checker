@@ -12,17 +12,36 @@
           <div class="task-query-actions">
             <el-button type="primary" native-type="submit">查询</el-button>
             <el-button @click="reset">重置</el-button>
+            <el-button
+              v-if="selectedJobIds.length"
+              type="danger"
+              plain
+              icon="el-icon-delete"
+              :loading="batchDeleting"
+              @click="batchDeleteTasks"
+            >
+              批量删除 ({{ selectedJobIds.length }})
+            </el-button>
             <el-button type="primary" icon="el-icon-plus" @click="uploadVisible = true">新增核对</el-button>
           </div>
         </form>
         <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="task-query-error" />
         <div class="task-table-scroll" v-loading="loading">
           <table class="task-table">
-            <thead><tr><th scope="col" class="task-files-column">核对报告</th><th scope="col" class="task-type-column">任务类型</th><th scope="col" class="task-product-column">基金名称</th><th scope="col" class="task-dates-column">报告日期</th><th scope="col" class="task-state-column">任务状态</th><th scope="col" class="task-result-column">核对结果</th><th scope="col" class="task-created-column">创建时间</th><th scope="col" class="task-duration-column">执行用时</th><th scope="col" class="task-action-column">操作</th></tr></thead>
+            <thead><tr><th scope="col" class="task-select-column"><input type="checkbox" aria-label="全选当前页可删除任务" :checked="allSelectableSelected" :indeterminate.prop="someSelectableSelected" :disabled="!selectableTaskIds.length" @change="toggleSelectAll($event.target.checked)"></th><th scope="col" class="task-files-column">核对报告</th><th scope="col" class="task-type-column">任务类型</th><th scope="col" class="task-product-column">基金名称</th><th scope="col" class="task-dates-column">报告日期</th><th scope="col" class="task-state-column">任务状态</th><th scope="col" class="task-result-column">核对结果</th><th scope="col" class="task-created-column">创建时间</th><th scope="col" class="task-duration-column">执行用时</th><th scope="col" class="task-action-column">操作</th></tr></thead>
             <tbody>
               <tr v-for="task in tasks" :key="task.job_id">
+                <td class="task-select-cell">
+                  <input
+                    type="checkbox"
+                    :aria-label="'选择任务 ' + task.job_id"
+                    :checked="selectedJobIds.indexOf(task.job_id) >= 0"
+                    :disabled="['queued', 'running'].includes(task.status) || batchDeleting"
+                    @change="toggleSelectTask(task.job_id, $event.target.checked)"
+                  >
+                </td>
                 <td class="task-files-cell">
-                  <div v-for="role in documentRoles" v-if="fileName(task, role.key) !== '未记录文件名'" :key="role.key" class="task-document-row" :title="fileName(task, role.key)">
+                  <div v-for="role in documentRolesFor(task)" v-if="fileName(task, role.key) !== '未记录文件名'" :key="role.key" class="task-document-row" :title="fileName(task, role.key)">
                     <span class="task-document-icon" :class="role.key">{{ role.icon }}</span><span class="task-document-label">{{ role.label }}</span><span class="task-document-name">{{ fileName(task, role.key) }}</span>
                   </div>
                 </td>
@@ -32,12 +51,21 @@
                   <small v-if="task.fund_code">{{ task.fund_code }}</small>
                 </td>
                 <td class="task-report-dates-cell">
-                  <div v-for="role in documentRoles" v-if="fileName(task, role.key) !== '未记录文件名'" :key="role.key" class="task-report-date-row" :title="dateLabel(task, role.key)">
+                  <div v-for="role in documentRolesFor(task)" v-if="fileName(task, role.key) !== '未记录文件名'" :key="role.key" class="task-report-date-row" :title="dateLabel(task, role.key)">
                     <span class="task-report-date-label">{{ role.label }}</span><span class="task-report-date-value">{{ reportDate(task, role.key) }}</span>
                   </div>
                 </td>
                 <td><span class="task-state-tag" :class="task.status"><i />{{ stateLabel(task.status) }}</span></td>
-                <td><span class="task-result" :class="resultClass(task)">{{ resultLabel(task) }}</span></td>
+                <td>
+                  <div class="task-result-list">
+                    <span
+                      v-for="(badge, index) in resultBadges(task)"
+                      :key="index"
+                      class="task-result"
+                      :class="badge.cls"
+                    >{{ badge.text }}</span>
+                  </div>
+                </td>
                 <td class="task-time-cell">{{ formatDate(task.created_at) }}</td>
                 <td class="task-duration-cell">{{ elapsed(task) }}</td>
                 <td class="task-action-cell">
@@ -64,7 +92,7 @@
                   </div>
                 </td>
               </tr>
-              <tr v-if="!tasks.length && !loading"><td colspan="9" class="task-empty"><i class="el-icon-document" /><strong>{{ error ? '任务列表暂时不可用' : '暂无核对任务' }}</strong><span v-if="!error">{{ hasFilters ? '请调整查询条件' : '点击新增核对发起任务' }}</span></td></tr>
+              <tr v-if="!tasks.length && !loading"><td colspan="10" class="task-empty"><i class="el-icon-document" /><strong>{{ error ? '任务列表暂时不可用' : '暂无核对任务' }}</strong><span v-if="!error">{{ hasFilters ? '请调整查询条件' : '点击新增核对发起任务' }}</span></td></tr>
             </tbody>
           </table>
         </div>
@@ -86,14 +114,19 @@ export default {
   data() {
     return {
       tasks: [], total: 0, loading: false, error: "", keyword: "", workflowId: "", status: "", resultStatus: "", reportDates: [], page: 1, pageSize: 10,
-      uploadVisible: false, rerunningId: "", deletingId: "", clockNow: Date.now(), pollTimer: null, clockTimer: null, requestId: 0, refreshing: false,
+      uploadVisible: false, rerunningId: "", deletingId: "", selectedJobIds: [], batchDeleting: false, clockNow: Date.now(), pollTimer: null, clockTimer: null, requestId: 0, refreshing: false,
       workflowTypes: [{ value: "product-summary-verification", label: "产品概要" }, { value: "prospectus-periodic-comparison", label: "招募说明书" }],
       states: [{ value: "queued", label: "排队中" }, { value: "running", label: "核对中" }, { value: "completed", label: "已完成" }, { value: "failed", label: "失败" }],
       results: [{ value: "MATCH", label: "一致" }, { value: "MISMATCH", label: "存在差异" }, { value: "UNRESOLVED", label: "待人工复核" }],
       documentRoles: [{ key: "prospectus", icon: "招", label: "招募说明书" }, { key: "periodic_report", icon: "定", label: "定期报告" }, { key: "product_summary", icon: "概", label: "产品概要" }, { key: "annual_report", icon: "年", label: "年度报告" }],
     };
   },
-  computed: { hasFilters() { return !!(this.keyword || this.workflowId || this.status || this.resultStatus || this.reportDates && this.reportDates.length); } },
+  computed: {
+    hasFilters() { return !!(this.keyword || this.workflowId || this.status || this.resultStatus || this.reportDates && this.reportDates.length); },
+    selectableTaskIds() { return this.tasks.filter((task) => !["queued", "running"].includes(task.status)).map((task) => task.job_id); },
+    allSelectableSelected() { return this.selectableTaskIds.length > 0 && this.selectableTaskIds.every((id) => this.selectedJobIds.indexOf(id) >= 0); },
+    someSelectableSelected() { return !this.allSelectableSelected && this.selectableTaskIds.some((id) => this.selectedJobIds.indexOf(id) >= 0); },
+  },
   watch: { "$route.query": { immediate: true, handler() { this.readQuery(); this.fetchTasks(); } } },
   mounted() {
     this.pollTimer = window.setInterval(() => { if (!document.hidden && !this.refreshing) this.fetchTasks(true); }, 5000);
@@ -103,7 +136,7 @@ export default {
   methods: {
     readQuery() {
       const q = this.$route.query;
-      this.keyword = String(q.q || ""); this.workflowId = q.workflow_id || ""; this.status = q.status || ""; this.resultStatus = q.result_status || "";
+      this.keyword = String(q.q || ""); this.workflowId = q.workflow_id === "historical-performance-verification" ? "prospectus-periodic-comparison" : q.workflow_id || ""; this.status = q.status || ""; this.resultStatus = q.result_status || "";
       this.reportDates = q.report_start && q.report_end ? [q.report_start, q.report_end] : [];
       this.page = Math.max(1, Math.floor(Number(q.page) || 1));
       this.pageSize = [10, 20, 50].indexOf(Number(q.page_size)) >= 0 ? Number(q.page_size) : 10;
@@ -131,7 +164,7 @@ export default {
       this.refreshing = true;
       if (!silent) this.loading = true;
       try {
-        const response = await axios.get("/api/tasks", { params: this.$route.query });
+        const response = await axios.get("/api/tasks", { params: { ...this.$route.query, workflow_id: this.workflowId || undefined } });
         if (request !== this.requestId) return;
         this.tasks = response.data.tasks || []; this.total = response.data.total || 0; this.error = "";
         if (!this.tasks.length && this.total && this.page > 1) { this.page = Math.ceil(this.total / this.pageSize); this.applyQuery(); }
@@ -172,6 +205,7 @@ export default {
       this.deletingId = task.job_id;
       try {
         await axios.delete("/api/jobs/" + encodeURIComponent(task.job_id));
+        this.selectedJobIds = this.selectedJobIds.filter((id) => id !== task.job_id);
         this.$message.success("已删除核对任务");
         await this.fetchTasks();
       } catch (error) {
@@ -179,6 +213,53 @@ export default {
         this.$message.error(typeof detail === "string" ? detail : "删除失败，请重试。");
       } finally {
         this.deletingId = "";
+      }
+    },
+    toggleSelectTask(jobId, checked) {
+      if (checked) {
+        if (this.selectedJobIds.indexOf(jobId) < 0) this.selectedJobIds = [...this.selectedJobIds, jobId];
+      } else {
+        this.selectedJobIds = this.selectedJobIds.filter((id) => id !== jobId);
+      }
+    },
+    toggleSelectAll(checked) {
+      const pageIds = this.selectableTaskIds;
+      if (checked) {
+        const next = new Set([...this.selectedJobIds, ...pageIds]);
+        this.selectedJobIds = Array.from(next);
+      } else {
+        this.selectedJobIds = this.selectedJobIds.filter((id) => pageIds.indexOf(id) < 0);
+      }
+    },
+    async batchDeleteTasks() {
+      if (!this.selectedJobIds.length || this.batchDeleting) return;
+      const count = this.selectedJobIds.length;
+      try {
+        await this.$confirm(`删除后不可恢复，确认删除选中的 ${count} 个核对任务？`, "批量删除任务", {
+          confirmButtonText: "删除",
+          cancelButtonText: "取消",
+          type: "warning",
+        });
+      } catch (_) {
+        return;
+      }
+      this.batchDeleting = true;
+      try {
+        const response = await axios.post("/api/jobs/batch-delete", { job_ids: this.selectedJobIds });
+        const deleted = (response.data && response.data.deleted_ids) || [];
+        const skipped = (response.data && response.data.skipped) || [];
+        this.selectedJobIds = [];
+        if (skipped.length) {
+          this.$message.warning(`已删除 ${deleted.length} 个任务，另有 ${skipped.length} 个未删除`);
+        } else {
+          this.$message.success(`已删除 ${deleted.length} 个核对任务`);
+        }
+        await this.fetchTasks();
+      } catch (error) {
+        const detail = error.response && error.response.data && error.response.data.detail;
+        this.$message.error(typeof detail === "string" ? detail : "批量删除失败，请重试。");
+      } finally {
+        this.batchDeleting = false;
       }
     },
     batchTasksCreated(result) {
@@ -198,28 +279,45 @@ export default {
       if (startMatch && end === startMatch[1] + "-" + startMatch[2] + "-" + String(new Date(Number(startMatch[1]), Number(startMatch[2]), 0).getDate()).padStart(2, "0")) return startMatch[1] + "-" + startMatch[2];
       return start + " 至 " + end;
     },
+    documentRolesFor(task) {
+      const dynamic = Object.keys(task.document_names || {}).filter((key) => /^historical_report_\d{3}$/.test(key)).sort().map((key, index) => ({ key, icon: "定", label: "历史报告 " + (index + 1) }));
+      return [...this.documentRoles.filter((role) => role.key !== "periodic_report"),
+        ...(dynamic.length ? dynamic : this.documentRoles.filter((role) => role.key === "periodic_report"))];
+    },
     workflowLabel(task) { const item = this.workflowTypes.find((t) => t.value === (task.workflow_id || "prospectus-periodic-comparison")); return item ? item.label : "招募说明书"; },
     stateLabel(status) { const item = this.states.find((item) => item.value === status); return item ? item.label : "未知状态"; },
-    resultLabel(task) {
-      if (task.status === "failed") return "核对失败";
-      if (task.status !== "completed") return "等待结果";
+    resultBadges(task) {
+      if (task.status === "failed") return [{ text: "核对失败", cls: "danger" }];
+      if (task.status !== "completed") return [{ text: "等待结果", cls: "muted" }];
+      const diffCount = task.difference_count || 0;
       const reviewCount = (task.unresolved_count || 0) + (task.not_checked_count || 0);
-      if (task.workflow_id === "product-summary-verification") {
-        if (task.result_status === "MISMATCH") return "差异 " + (task.difference_count || 0) + " 项";
-        if (task.result_status === "UNRESOLVED" || task.result_status === "NOT_CHECKED") {
-          return reviewCount ? "待复核 " + reviewCount + " 项" : "有待复核项";
-        }
-        if (task.result_status === "NO_COMMON_CONTENT" || task.result_status === "SKIPPED") return "无可比较内容";
-        if (task.result_status === "INCOMPATIBLE") return "文件不适配";
+      if (task.result_status === "NO_COMMON_CONTENT" || task.result_status === "SKIPPED") {
+        return [{ text: "无可比较内容", cls: "muted" }];
       }
-      if (task.result_status === "MISMATCH") return "差异 " + (task.difference_count || 0) + " 项";
+      if (task.result_status === "INCOMPATIBLE") {
+        return [{ text: "文件不适配", cls: "muted" }];
+      }
+      if (task.result_status === "MISMATCH") {
+        const badges = [{ text: "差异 " + diffCount + " 项", cls: "danger" }];
+        if (reviewCount > 0) badges.push({ text: "待复核 " + reviewCount + " 项", cls: "warning" });
+        return badges;
+      }
       if (task.result_status === "UNRESOLVED" || task.result_status === "NOT_CHECKED") {
-        return reviewCount ? "待复核 " + reviewCount + " 项" : "有待复核项";
+        const badges = [];
+        if (diffCount > 0) badges.push({ text: "差异 " + diffCount + " 项", cls: "danger" });
+        badges.push({ text: reviewCount ? "待复核 " + reviewCount + " 项" : "有待复核项", cls: "warning" });
+        return badges;
       }
-      const item = this.results.find((item) => item.value === task.result_status);
-      return item ? item.label : "未记录结果";
+      if (task.result_status === "MATCH") {
+        const badges = [{ text: "一致", cls: "success" }];
+        if (reviewCount > 0) badges.push({ text: "待复核 " + reviewCount + " 项", cls: "warning" });
+        return badges;
+      }
+      const item = this.results.find((entry) => entry.value === task.result_status);
+      const badges = [{ text: item ? item.label : "未记录结果", cls: item ? "warning" : "muted" }];
+      if (reviewCount > 0) badges.push({ text: "待复核 " + reviewCount + " 项", cls: "warning" });
+      return badges;
     },
-    resultClass(task) { return task.status === "failed" || task.result_status === "MISMATCH" ? "danger" : task.result_status === "MATCH" ? "success" : ["NO_COMMON_CONTENT", "SKIPPED", "INCOMPATIBLE"].includes(task.result_status) ? "muted" : task.result_status ? "warning" : "muted"; },
     formatDate(value) { const date = new Date(value); return value && !Number.isNaN(date.getTime()) ? date.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).replace(/\//g, "-") : "—"; },
     elapsed(task) {
       if (!task.started_at) return "—";

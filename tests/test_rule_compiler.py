@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 import app.rule_compiler as compiler
-from app.rule_plan import ExecutionPlanError, eligible_fallback_roles, eligible_fallbacks, validate_execution_plan
+from app.rule_plan import ExecutionPlanError, eligible_fallback_roles, eligible_fallbacks, evaluate_reference_document_filters, validate_execution_plan
 
 
 def _prose() -> str:
@@ -142,7 +142,10 @@ def test_compiler_assigns_each_condition_one_authoritative_execution_path(tmp_pa
     assert "属于结果表述约束" in prompt
     assert "严禁按常规金融语义或习惯擅自改归其他分类" in prompt
     assert "严禁在 comparison.context_checks、context_checks_by_reference_role 或 context_check_groups 中生成基于 document.metadata.fund_name 或 document.metadata.fund_code 的身份校验" in prompt
-    assert compiler.PROMPT_VERSION == "rule-interpretation-51"
+    assert "报告子类型不是文档角色" in prompt
+    assert "规则以原文行名作为身份时，使用已有通用字段 label" in prompt
+    assert "来自段落或表格分组标题的身份不得编造列映射" in prompt
+    assert compiler.PROMPT_VERSION == "rule-interpretation-53"
 
 
 def test_compiler_rejects_unloadable_plan_without_activation(tmp_path, monkeypatch):
@@ -337,6 +340,21 @@ def test_execution_plan_compiles_only_explicit_identity_equivalence_groups():
     assert validate_execution_plan(plan)["row_matching"]["identity_equivalence_groups"] == []
 
 
+def test_execution_plan_allows_scope_aliases_only_on_declared_fields():
+    plan = _valid_execution_plan()
+    matching = plan["row_matching"]
+    matching["scope_fields"] = ["market_scope"]
+    groups = [{"canonical_identity": "境内", "equivalent_labels": ["domestic"]}]
+    matching["scope_equivalence_groups"] = {"market_scope": groups}
+
+    validated = validate_execution_plan(plan)
+    assert validated["row_matching"]["scope_equivalence_groups"] == {"market_scope": groups}
+
+    matching["scope_equivalence_groups"] = {"another_scope": groups}
+    with pytest.raises(ExecutionPlanError, match="已有逐行范围字段"):
+        validate_execution_plan(plan)
+
+
 def test_execution_plan_rejects_overlapping_identity_equivalence_groups():
     plan = _valid_execution_plan()
     plan["row_matching"]["identity_equivalence_groups"] = [
@@ -383,6 +401,25 @@ def test_execution_plan_validates_generic_source_fallback_contract():
     plan["source_selection"]["fallbacks"][0]["when"][0]["fact"] = "audit_fee.same_nature"
     with pytest.raises(ExecutionPlanError, match="不属于通用来源事实"):
         validate_execution_plan(plan)
+
+
+def test_reference_document_filters_are_rule_declared_and_generic():
+    plan = _valid_execution_plan()
+    plan["source_selection"]["reference_document_filters"] = [
+        {"role": "periodic_report", "path": "document.document_info.report_quarter",
+         "operation": "equals", "value": "4", "required": True},
+        {"role": "periodic_report", "path": "document.document_info.period_end",
+         "operation": "ends_with", "value": "-12-31", "required": True},
+    ]
+    normalized = validate_execution_plan(plan)
+    assert evaluate_reference_document_filters(normalized, "periodic_report", {
+        "document_info": {"report_quarter": "4", "period_end": "2025-12-31"},
+    })[0]
+    valid, assessments = evaluate_reference_document_filters(normalized, "periodic_report", {
+        "document_info": {"report_quarter": "3", "period_end": "2025-09-30"},
+    })
+    assert not valid
+    assert [item["status"] for item in assessments] == ["UNRESOLVED", "UNRESOLVED"]
 
 
 def test_execution_plan_accepts_alternative_context_evidence_with_conflict_detection_contract():

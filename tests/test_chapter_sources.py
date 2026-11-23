@@ -8,6 +8,10 @@ from app.chapter_sources import ChapterCache, bind_sources, merge_source_batch_m
 from app.rule_compiler import load_investment_rule_definitions, read_rule_source
 
 _, EXECUTION_PLANS, MODULE_RULES = load_investment_rule_definitions()
+ASSET_RULE, INDUSTRY_RULE, STOCK_RULE = (
+    next(rule for rule in MODULE_RULES if rule["rule_id"] == rule_id)
+    for rule_id in ("investment.asset_allocation", "investment.industry_stock_portfolio", "investment.stock_holdings")
+)
 
 
 def test_cross_page_chapters_cover_all_real_source_rows():
@@ -32,10 +36,10 @@ def test_cross_page_chapters_cover_all_real_source_rows():
             maps = extraction._header_column_maps(
                 tables, {rule["rule_id"]: extraction._header_aliases(EXECUTION_PLANS[rule["rule_id"]]) for rule in MODULE_RULES},
                 required_fields_by_rule={rule["rule_id"]: set(rule["fields"]) for rule in MODULE_RULES},
-                column_tolerance=extraction._cross_page_column_tolerance(extraction.COMMON_RULE_FILE.read_text()),
+                column_tolerance=extraction._cross_page_column_tolerance(),
             )
-            assert [page["physical_page"] for page in contexts[MODULE_RULES[1]["rule_id"]]["physical_pages"]] == expected_pages
-            for rule, expected in zip(MODULE_RULES, [12, 20, 10]):
+            assert [page["physical_page"] for page in contexts[INDUSTRY_RULE["rule_id"]]["physical_pages"]] == expected_pages
+            for rule, expected in zip((ASSET_RULE, INDUSTRY_RULE, STOCK_RULE), (12, 20, 10)):
                 context = contexts[rule["rule_id"]]
                 active_rule = extraction._rule_for_execution_plan(rule, EXECUTION_PLANS[rule["rule_id"]])
                 sources = source_catalogue(context, active_rule, tables, maps, hashlib.sha256(content).hexdigest())
@@ -46,16 +50,16 @@ def test_cross_page_chapters_cover_all_real_source_rows():
                 assert all(len(source["source_id"]) == 24 for source in sources.values())
                 assert all(source["bbox"] and len(source["bbox"]) == 4 for source in sources.values())
                 assert all(source["raw_text"] and source["page"] > 0 for source in sources.values())
-                money_field = "amount" if rule is MODULE_RULES[0] else "fair_value"
+                money_field = "amount" if rule is ASSET_RULE else "fair_value"
                 assert all(source["fields"][money_field]["unit"] == "元" for source in sources.values())
-                if rule is MODULE_RULES[1]:
+                if rule is INDUSTRY_RULE:
                     assert any("合计" in source["cells"] for source in sources.values())
         finally:
             document.close()
 
 
 def test_source_binding_rejects_missing_duplicate_and_foreign_rows_and_preserves_zero():
-    base_rule = MODULE_RULES[1]
+    base_rule = INDUSTRY_RULE
     rule = extraction._rule_for_execution_plan(base_rule, EXECUTION_PLANS[base_rule["rule_id"]])
     records = {
         "p2t0r1": {"page": 2, "cells": ["B", "采矿业", "0", "-"],
@@ -105,7 +109,7 @@ def test_source_binding_uses_rule_declared_identity_fields_without_domain_field_
 
 
 def test_industry_table_without_optional_code_column_still_builds_numeric_sources():
-    rule = MODULE_RULES[1]
+    rule = INDUSTRY_RULE
     rule_text = read_rule_source(rule["file"])
     matrix = [
         ["行业类别", "公允价值（人民币元）", "占基金资产净值比例（%）"],
@@ -218,7 +222,7 @@ def test_batch_merge_marks_missing_source_rows_and_merges_scope_conservatively()
 
 
 def test_source_gaps_detects_unmapped_plain_text_continuation_row_without_row_name_rules():
-    rule = MODULE_RULES[0]
+    rule = ASSET_RULE
     context = {"section_markdown": "|8|其他各项资产|10|1|\n第 44 页 共 65 页\n合计 110 100 注：表格口径说明。"}
     field_values = dict(zip(rule["fields"], ["10", "1"]))
     records = {"row1": {"cells": ["8", "其他各项资产", "10", "1"],
@@ -253,7 +257,7 @@ def test_source_gaps_ignores_page_image_links_in_plain_text_completeness_scan():
 
 
 def test_merged_header_columns_bind_to_body_cells_by_horizontal_geometry():
-    rule = MODULE_RULES[1]
+    rule = INDUSTRY_RULE
     table = {
         "matrix": [
             ["", "代码", "", "", "行业类别", "公允价值（元）", "占基金资产净值比例(%)", ""],
@@ -283,7 +287,7 @@ def test_merged_header_columns_bind_to_body_cells_by_horizontal_geometry():
 
 
 def test_headerless_continuation_inherits_column_centers_across_different_grid_counts():
-    rule = MODULE_RULES[1]
+    rule = INDUSTRY_RULE
     previous = {
         "matrix": [["", "代码", "", "", "行业类别", "公允价值（元）", "占基金资产净值比例(%)", ""],
                    ["A", None, None, "农业", None, "10.00", "0.10", ""]],
@@ -348,7 +352,7 @@ def test_invalid_json_retries_only_the_failed_chapter():
         async def generate_text(self, system, prompt):
             rule_id = next(rule["rule_id"] for rule in MODULE_RULES if f"模块：{rule['rule_id']}。" in prompt)
             self.calls[rule_id] = self.calls.get(rule_id, 0) + 1
-            if rule_id == MODULE_RULES[1]["rule_id"] and self.calls[rule_id] == 1:
+            if rule_id == INDUSTRY_RULE["rule_id"] and self.calls[rule_id] == 1:
                 return '{"found":'
             return '{"found":true,"rows":[]}'
 
@@ -358,5 +362,84 @@ def test_invalid_json_retries_only_the_failed_chapter():
         {rule["rule_id"]: read_rule_source(rule["file"]) for rule in MODULE_RULES},
         {}, {}, set(), None, False, "sample", None,
     ))
-    assert [provider.calls[rule["rule_id"]] for rule in MODULE_RULES] == [1, 2, 1]
-    assert len(result["modules"]) == 3
+    assert provider.calls == {rule["rule_id"]: 2 if rule is INDUSTRY_RULE else 1 for rule in MODULE_RULES}
+    assert len(result["modules"]) == len(MODULE_RULES)
+
+
+def test_table_fast_path_groups_logical_tables_and_expands_rows():
+    from app.chapter_sources import (
+        bind_sources,
+        can_use_table_fast_path,
+        expand_table_classifications,
+        table_classification_groups,
+    )
+
+    rule = {**STOCK_RULE, "row_matching": EXECUTION_PLANS["investment.stock_holdings"]["row_matching"]}
+    records = {}
+    for index in range(1, 46):
+        page = 1 if index <= 25 else 2 if index <= 35 else 3
+        table_idx = 0 if index <= 35 else 1
+        code = f"{600000 + index:06d}"
+        name = f"样本股票{index}"
+        records[f"p{page}_t{table_idx}_r{index}"] = {
+            "source_id": f"p{page}_t{table_idx}_r{index}",
+            "page": page,
+            "source_ref": {"table": table_idx, "row": index},
+            "mapping": {"security_code": 1, "security_name": 2, "shares": 3, "fair_value": 4, "nav_ratio": 5},
+            "cells": [str(index), code, name, "100", "1,000.00", "0.50"],
+            "fields": {
+                "security_code": {"raw_text": code, "normalized_value": code},
+                "security_name": {"raw_text": name, "normalized_value": name},
+                "shares": {"raw_text": "100", "normalized_value": "100"},
+                "fair_value": {"raw_text": "1,000.00", "normalized_value": "1000.00"},
+                "nav_ratio": {"raw_text": "0.50", "normalized_value": "0.50"},
+            },
+            "cell_boxes": {k: [0.0, 0.0, 10.0, 10.0] for k in ("security_code", "security_name", "shares", "fair_value", "nav_ratio")},
+        }
+
+    assert can_use_table_fast_path(records, rule) is True
+    assert can_use_table_fast_path(dict(list(records.items())[:40]), rule) is False
+    assert can_use_table_fast_path(records, {**rule, "row_matching": {**rule["row_matching"], "hierarchy_fields": ["category"]}}) is False
+
+    tables = {
+        1: [{"matrix": [["序号", "股票代码", "股票名称", "数量（股）", "公允价值（元）", "占基金资产净值比例（％）"]]}],
+        2: [{"matrix": [["序号", "股票代码", "股票名称", "数量（股）", "公允价值（元）", "占基金资产净值比例（％）"]]}],
+        3: [
+            {"matrix": []},
+            {"matrix": [["序号", "股票代码", "股票名称", "数量（股）", "公允价值（元）", "占基金资产净值比例（％）"]]},
+        ],
+    }
+    section_markdown = (
+        "### 1.2 指数投资股票明细\n"
+        "<table><tr><th>序号</th><th>股票代码</th><th>股票名称</th><th>数量（股）</th><th>公允价值（元）</th><th>占基金资产净值比例（％）</th></tr>"
+        "<tr><td>1</td><td>600001</td><td>样本股票1</td><td>100</td><td>1,000.00</td><td>0.50</td></tr>"
+        "<tr><td>26</td><td>600026</td><td>样本股票26</td><td>100</td><td>1,000.00</td><td>0.50</td></tr></table>\n"
+        "### 1.3 积极投资股票明细\n"
+        "<table><tr><th>序号</th><th>股票代码</th><th>股票名称</th><th>数量（股）</th><th>公允价值（元）</th><th>占基金资产净值比例（％）</th></tr>"
+        "<tr><td>36</td><td>600036</td><td>样本股票36</td><td>100</td><td>1,000.00</td><td>0.50</td></tr></table>\n"
+    )
+    groups = table_classification_groups({"section_markdown": section_markdown}, records, tables)
+    assert [len(group["source_ids"]) for group in groups] == [35, 10]
+    assert groups[0]["pages"] == [1, 2]
+    assert groups[1]["pages"] == [3]
+
+    expanded = expand_table_classifications(
+        {
+            "found": True,
+            "scope": {"disclosure_scope": "all"},
+            "table_classifications": [
+                {"table_id": groups[0]["table_id"], "investment_scope": "指数投资"},
+                {"table_id": groups[1]["table_id"], "investment_scope": "积极投资"},
+            ],
+        },
+        groups,
+        records,
+        rule,
+    )
+    bound = bind_sources(expanded, records, rule)
+    assert bound["source_warnings"] == []
+    assert len(bound["rows"]) == 45
+    assert bound["rows"][0]["investment_scope"] == "指数投资"
+    assert bound["rows"][34]["investment_scope"] == "指数投资"
+    assert bound["rows"][35]["investment_scope"] == "积极投资"
+    assert bound["rows"][0]["fields"]["fair_value"]["raw_text"] == "1,000.00"

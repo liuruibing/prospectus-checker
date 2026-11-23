@@ -7,6 +7,10 @@ _ASSET_RULE = next(rule for rule in MODULE_RULES if rule["rule_id"] == "investme
 _ASSET_RATIO_FIELD = next(field for field, label in _ASSET_RULE["fields"].items() if "比例" in label)
 
 
+def module_result(result: dict, rule_id: str) -> dict:
+    return next(module for module in result["modules"] if module["rule_id"] == rule_id)
+
+
 def value(raw: str, unit: str = "元") -> dict:
     normalized = normalize_numeric(raw)
     return {
@@ -84,9 +88,11 @@ def document(*, period: str = "2025-12-31", disclosure: str = "2026-01-30", asse
                 if "nav_ratio" not in row["fields"] and "ratio_of_net_assets" in row["fields"]:
                     row["fields"]["nav_ratio"] = row["fields"]["ratio_of_net_assets"]
                 rows.append(row)
-        supplied = {"investment.asset_allocation": asset_rows,
-                    "investment.industry_stock_portfolio": industry_rows,
-                    "investment.stock_holdings": stock_rows}[rule['rule_id']]
+        supplied = {
+            "investment.asset_allocation": asset_rows,
+            "investment.industry_stock_portfolio": industry_rows,
+            "investment.stock_holdings": stock_rows,
+        }.get(rule['rule_id'])
         modules.append({"rule_id": rule["rule_id"], "status": "EXTRACTED", "rows": rows,
                         "scope": {"investment_scope": "all", "disclosure_scope": "all",
                                   "fund_identity": "示例基金"},
@@ -126,12 +132,35 @@ def test_numeric_formatting_differences_compare_equal():
 
     assert result["status"] == "MATCH"
     assert result["difference_count"] == 0
+    module = module_result(result, "investment.asset_allocation")
+    assert module["differences"] == []
+    checks = {item["field_key"]: item for item in module["checks"]}
+    assert set(checks) == {"amount", _ASSET_RATIO_FIELD}
+    assert all(item["status"] == "MATCH" for item in checks.values())
+    assert checks["amount"]["prospectus"]["raw_text"] == "4,722.00"
+    assert checks["amount"]["periodic_report"]["raw_text"] == "4722"
+
+
+def test_matching_fields_remain_visible_alongside_differences():
+    result = compare_documents(
+        document(asset_rows=[asset_row("4722", "100.0")]),
+        document(asset_rows=[asset_row("4700", "100.00")]),
+    )
+
+    assert result["difference_count"] == 1
+    module = module_result(result, "investment.asset_allocation")
+    assert {item["field_key"]: item["status"] for item in module["checks"]} == {
+        "amount": "MISMATCH",
+        _ASSET_RATIO_FIELD: "MATCH",
+    }
+    assert [item["field_key"] for item in module["differences"]] == ["amount"]
 
 
 def test_unresolved_extraction_is_not_reported_as_a_missing_module_difference():
     plan = {
         "rule_identity": "investment.synthetic",
         "display_title": "示例章节",
+        "row_matching": {"target_population": "target_document", "reference_superset_allowed": True},
         "comparison": {},
     }
     result = _generic_compare_module(
@@ -140,6 +169,39 @@ def test_unresolved_extraction_is_not_reported_as_a_missing_module_difference():
         {"modules": [{"rule_id": "investment.synthetic", "status": "MISSING_MODULE", "rows": []}]},
         None,
     )
+    assert result["status"] == "UNRESOLVED_STRUCTURE"
+    assert result["differences"] == []
+
+
+def test_verified_target_not_applicable_ignores_reference_only_module():
+    plan = {
+        "rule_identity": "investment.synthetic",
+        "display_title": "示例章节",
+        "row_matching": {"target_population": "target_document", "reference_superset_allowed": True},
+        "comparison": {},
+    }
+    left = {"modules": [{
+        "rule_id": "investment.synthetic", "status": "NOT_APPLICABLE", "rows": [],
+        "applicability": {"status": "NOT_APPLICABLE", "evidence": {"page": 2, "quote": "该类投资不适用"}},
+    }]}
+    right = {"modules": [{
+        "rule_id": "investment.synthetic", "status": "EXTRACTED", "rows": [{"label": "参考侧额外披露"}],
+    }]}
+    result = _generic_compare_module(plan, left, right, None)
+    assert result["status"] == "NOT_APPLICABLE"
+    assert result["differences"] == []
+
+
+def test_target_not_located_without_verified_absence_remains_unresolved():
+    plan = {
+        "rule_identity": "investment.synthetic",
+        "display_title": "示例章节",
+        "row_matching": {"target_population": "target_document", "reference_superset_allowed": True},
+        "comparison": {},
+    }
+    left = {"modules": [{"rule_id": "investment.synthetic", "status": "UNRESOLVED_STRUCTURE", "rows": []}]}
+    right = {"modules": [{"rule_id": "investment.synthetic", "status": "EXTRACTED", "rows": []}]}
+    result = _generic_compare_module(plan, left, right, None)
     assert result["status"] == "UNRESOLVED_STRUCTURE"
     assert result["differences"] == []
 
@@ -767,6 +829,35 @@ def test_matching_verified_empty_disclosures_compare_as_match():
     assert module["status"] == "MATCH"
 
 
+def test_empty_disclosure_checks_pair_matching_scopes_and_keep_both_evidences():
+    rule_id = "investment.industry_stock_portfolio"
+    left, right = document(), document()
+
+    def disclosure(scope: str, quote: str, page: int) -> dict:
+        return {
+            "status": "NO_DATA", "scope": {"market_scope": scope},
+            "quote": quote, "evidence": {"page": page, "status": "LOCATED"},
+        }
+
+    module_result(left, rule_id)["disclosures"] = [
+        disclosure("domestic", "招募书境内披露", 48), disclosure("hk_connect", "招募书港股通披露", 49),
+    ]
+    module_result(right, rule_id)["disclosures"] = [
+        disclosure("hk_connect", "季报港股通披露", 9), disclosure("domestic", "季报境内披露", 8),
+    ]
+    module = module_result(compare_documents(left, right), rule_id)
+    assert module["status"] == "MATCH"
+    assert module["differences"] == []
+    assert [
+        (check["prospectus"]["raw_text"], check["periodic_report"]["raw_text"],
+         check["prospectus"]["evidence"]["page"], check["periodic_report"]["evidence"]["page"])
+        for check in module["checks"]
+    ] == [
+        ("招募书境内披露", "季报境内披露", 48, 8),
+        ("招募书港股通披露", "季报港股通披露", 49, 9),
+    ]
+
+
 def test_empty_disclosures_with_different_scopes_do_not_match():
     left, right = document(), document()
     for item, market in ((left, "domestic"), (right, "hk_connect")):
@@ -788,7 +879,7 @@ def test_empty_disclosures_missing_period_or_scope_never_fall_through_to_match()
             doc['document_info']['period_end'] = None
             m = next(m for m in doc['modules'] if m['rule_id'] == 'investment.stock_holdings')
             m['disclosures'] = [claim] if claim else []
-        m = compare_documents(left, right)['modules'][2]
+        m = module_result(compare_documents(left, right), 'investment.stock_holdings')
         assert m['status'] == 'UNRESOLVED_STRUCTURE'
         assert m['review_message']
 
@@ -834,16 +925,16 @@ def test_rule_required_period_mismatch_does_not_become_field_difference():
     assert result["warnings"] == []
 
 
-def test_report_disclosed_after_prospectus_is_not_used():
+def test_same_period_report_is_compared_when_sent_after_prospectus():
     result = compare_documents(
         document(disclosure="2026-01-30", asset_rows=[asset_row("1")]),
         document(disclosure="2026-02-01", asset_rows=[asset_row("2")]),
     )
 
-    assert result["status"] == "UNRESOLVED"
-    assert all(module["status"] == "UNRESOLVED_STRUCTURE" for module in result["modules"])
-    assert all(not module["differences"] for module in result["modules"])
-    assert all("身份、期间或适用范围" in module["review_message"] for module in result["modules"])
+    assert result["status"] == "MISMATCH"
+    assert result["difference_count"] == 1
+    module = module_result(result, "investment.asset_allocation")
+    assert module["differences"][0]["field_key"] == "amount"
 
 def test_missing_row_shows_the_side_where_it_was_found():
     common = {**asset_row(), "row_key": "cash", "label": "现金"}
@@ -863,8 +954,8 @@ def test_prospectus_top_n_is_compared_against_superset_report_without_report_onl
            'market_scope': 'domestic', 'investment_scope': 'all',
            'fields': {'fair_value': value('10'), 'quantity': value('2', '股'), 'ratio_of_net_assets': value('1', '%')}}
     left, right = document(stock_rows=[row]), document(stock_rows=[row, {**row, 'stock_code': '600002'}])
-    left['modules'][2]['scope'].update(disclosure_scope='top_n', limit=5)
-    compared = compare_documents(left, right)['modules'][2]
+    module_result(left, 'investment.stock_holdings')['scope'].update(disclosure_scope='top_n', limit=5)
+    compared = module_result(compare_documents(left, right), 'investment.stock_holdings')
     assert compared['status'] == 'MATCH'
     assert compared['differences'] == []
     assert compared['disclosure_ranges'] == {
@@ -887,10 +978,10 @@ def test_unknown_aggregate_scope_still_compares_target_rows_and_ignores_report_e
     left, right = document(stock_rows=target_rows), document(stock_rows=[
         *target_rows, stock('600003', investment_scope='index'),
     ])
-    left['modules'][2]['scope'].update(disclosure_scope='unknown', limit=None)
-    right['modules'][2]['scope'].update(disclosure_scope='all', limit=None)
+    module_result(left, 'investment.stock_holdings')['scope'].update(disclosure_scope='unknown', limit=None)
+    module_result(right, 'investment.stock_holdings')['scope'].update(disclosure_scope='all', limit=None)
 
-    compared = compare_documents(left, right)['modules'][2]
+    compared = module_result(compare_documents(left, right), 'investment.stock_holdings')
 
     assert compared['status'] == 'MATCH'
     assert compared['differences'] == []
@@ -907,10 +998,10 @@ def test_complete_reference_can_confirm_a_target_row_missing_even_when_target_sc
         },
     }
     left, right = document(stock_rows=[target]), document(stock_rows=[])
-    left['modules'][2]['scope'].update(disclosure_scope='unknown', limit=None)
-    right['modules'][2]['scope'].update(disclosure_scope='all', limit=None)
+    module_result(left, 'investment.stock_holdings')['scope'].update(disclosure_scope='unknown', limit=None)
+    module_result(right, 'investment.stock_holdings')['scope'].update(disclosure_scope='all', limit=None)
 
-    compared = compare_documents(left, right)['modules'][2]
+    compared = module_result(compare_documents(left, right), 'investment.stock_holdings')
 
     assert compared['status'] == 'MISMATCH'
     assert compared['differences'][0]['status'] == 'MISSING_ROW'
@@ -925,8 +1016,8 @@ def test_prospectus_target_rows_are_compared_even_when_a_report_has_extra_rows()
              'fields': {'fair_value': value('20'), 'quantity': value('3', '股'), 'ratio_of_net_assets': value('2', '%')}}
     left, right = document(stock_rows=[target]), document(stock_rows=[{**target, 'fields': {
         'fair_value': value('11'), 'quantity': value('2', '股'), 'ratio_of_net_assets': value('1', '%')}} , extra])
-    left['modules'][2]['scope'].update(disclosure_scope='top_n', limit=1)
-    compared = compare_documents(left, right)['modules'][2]
+    module_result(left, 'investment.stock_holdings')['scope'].update(disclosure_scope='top_n', limit=1)
+    compared = module_result(compare_documents(left, right), 'investment.stock_holdings')
     assert compared['status'] == 'MISMATCH'
     assert {item['field_key'] for item in compared['differences']} == {'fair_value'}
     assert all(item['row_label'] != '报告额外证券' for item in compared['differences'])
@@ -940,12 +1031,12 @@ def test_report_top_n_smaller_than_prospectus_target_remains_unresolved():
         for i in range(1, 6)
     ]
     left, right = document(stock_rows=rows), document(stock_rows=rows[:3])
-    left['modules'][2]['scope'].update(disclosure_scope='top_n', limit=5)
-    right['modules'][2]['scope'].update(disclosure_scope='top_n', limit=3)
-    compared = compare_documents(left, right)['modules'][2]
+    module_result(left, 'investment.stock_holdings')['scope'].update(disclosure_scope='top_n', limit=5)
+    module_result(right, 'investment.stock_holdings')['scope'].update(disclosure_scope='top_n', limit=3)
+    compared = module_result(compare_documents(left, right), 'investment.stock_holdings')
     assert compared['status'] == 'UNRESOLVED_STRUCTURE'
     assert compared['differences'] == []
-    assert '披露范围' in compared['review_message']
+    assert '来源范围' in compared['review_message']
 
 
 def test_unique_stock_with_unknown_market_matches_by_unique_code_without_conflict():
@@ -988,7 +1079,7 @@ def test_changed_rank_is_not_compared_when_the_plan_does_not_declare_it_a_fact()
         document(stock_rows=[report_stock]),
     )
 
-    stock_module = result["modules"][2]
+    stock_module = module_result(result, "investment.stock_holdings")
     assert result["status"] == "MATCH"
     assert stock_module["status"] == "MATCH"
     assert stock_module["differences"] == []
@@ -1049,7 +1140,7 @@ def test_industry_total_rows_without_code_are_matched_as_summary_rows():
         document(industry_rows=[total_row]),
     )
 
-    industry_module = result["modules"][1]
+    industry_module = module_result(result, "investment.industry_stock_portfolio")
     assert result["status"] == "MATCH"
     assert industry_module["status"] == "MATCH"
     assert industry_module["differences"] == []
@@ -1157,6 +1248,62 @@ def test_generic_row_alignment_does_not_bridge_conflicting_or_ambiguous_scopes()
         assert module["status"] == expected_status
 
 
+def test_declared_scope_aliases_preserve_meaning_and_parent_hierarchy():
+    plan = _synthetic_rule_plan()
+    plan["row_matching"].update(
+        identity_fields=["label"],
+        hierarchy_fields=["parent_key"],
+        scope_fields=["market_scope"],
+        required_scope_fields=["market_scope"],
+        scope_equivalence_groups={"market_scope": [
+            {"canonical_identity": "境内", "equivalent_labels": ["domestic"]},
+        ]},
+    )
+
+    def scoped_document(scope, parent_label, prefix):
+        rows = [
+            {"label": parent_label, "row_key": prefix + "-parent", "parent_key": None},
+            {"label": "子项目", "row_key": prefix + "-child", "parent_key": prefix + "-parent"},
+        ]
+        for row in rows:
+            row.update(market_scope=scope, fields={"distribution_amount": value("100")})
+        return {"modules": [{"rule_id": plan["rule_identity"], "status": "EXTRACTED", "rows": rows}]}
+
+    left = scoped_document("境内", "上级甲", "left")
+    result = _generic_compare_module(plan, left, scoped_document("domestic", "上级甲", "right"), None)
+    assert result["status"] == "MATCH"
+    assert len(result["checks"]) == 2
+    assert result["periodic_rows"][0]["market_scope"] == "domestic"
+    for scope, label in [("境外", "上级甲"), (None, "上级甲"), ("domestic", "上级乙")]:
+        result = _generic_compare_module(plan, left, scoped_document(scope, label, "right"), None)
+        assert result["status"] == "UNRESOLVED_STRUCTURE"
+        assert not any(check["row_label"] == "子项目" for check in result["checks"])
+
+
+def test_prose_pairs_use_verified_evidence_and_ignore_single_sided_facts():
+    plan = _synthetic_rule_plan()
+    plan["row_matching"].update(target_population="common_rows", identity_fields=["row_key"])
+    plan["comparison"]["fields"] = [
+        {"field": "disclosure_fact", "label": "披露事实", "operation": "semantic", "required": True},
+    ]
+
+    def doc(*phrases):
+        return {"modules": [{
+            "rule_id": plan["rule_identity"], "status": "EXTRACTED", "rows": [
+                {"row_key": phrase, "label": phrase, "fields": {"disclosure_fact": value(phrase, "")}}
+                for phrase in phrases
+            ],
+        }]}
+
+    left, right = doc("明确说明不参与", "仅目标披露"), doc("合同禁止参与", "仅参考披露")
+    result = _generic_compare_module(plan, left, right, None, [(0, 0, "MATCH")])
+    assert result["status"] == "MATCH" and len(result["checks"]) == 1
+    assert _generic_compare_module(plan, left, right, None, [])["status"] == "UNRESOLVED_STRUCTURE"
+    assert _generic_compare_module(plan, left, right, None, [(0, 0, "MISMATCH")])["status"] == "MISMATCH"
+    right["modules"][0]["rows"][0]["fields"]["disclosure_fact"]["evidence"] = {"status": "QUOTE_ONLY"}
+    assert _generic_compare_module(plan, left, right, None, [(0, 0, "MATCH")])["status"] == "UNRESOLVED_STRUCTURE"
+
+
 def test_one_sided_placeholder_row_is_not_silently_equated_with_absence():
     placeholder = {
         "label": "农、林、牧、渔业",
@@ -1176,7 +1323,7 @@ def test_one_sided_placeholder_row_is_not_silently_equated_with_absence():
 
     assert result["status"] == "MISMATCH"
     assert result["difference_count"] == 1
-    assert result["modules"][1]["differences"][0]["status"] == "MISSING_ROW"
+    assert module_result(result, "investment.industry_stock_portfolio")["differences"][0]["status"] == "MISSING_ROW"
 
 
 def test_within_days_and_warn_allow_comparison_within_half_year():
@@ -1240,3 +1387,130 @@ def test_hydrate_investment_document_dates_fills_prospectus_cover_month_and_vers
     )
     assert left["document_info"]["disclosure_date"] == "2025-11-01"
     assert right["document_info"]["disclosure_date"] == "2025-10-28"
+
+
+def test_compiled_investment_rules_require_exact_period_end_match():
+    _, plans, _ = load_investment_rule_definitions()
+    assert plans
+    for plan in plans.values():
+        checks = plan["comparison"]["context_checks"]
+        assert all(check.get("operation") != "within_days" for check in checks)
+        assert any(
+            check.get("operation") in {"date", "equals", "matches_target"}
+            and check.get("required") is True
+            and check.get("target_path") == "document.document_info.period_end"
+            and check.get("reference_path") == "document.document_info.period_end"
+            for check in checks
+        )
+
+    left = document(disclosure="2025-11-24", period="2025-06-30", asset_rows=[asset_row("100")])
+    right_diff_period = document(disclosure="2025-10-28", period="2025-09-30", asset_rows=[asset_row("200")])
+    blocked = compare_documents(left, right_diff_period, plans)
+    assert blocked["status"] == "UNRESOLVED"
+    assert blocked["difference_count"] == 0
+    assert all(module["status"] == "UNRESOLVED_STRUCTURE" for module in blocked["modules"])
+    assert any("2025-06-30" in module["review_message"] and "2025-09-30" in module["review_message"] for module in blocked["modules"])
+
+    right_same_period = document(disclosure="2025-10-28", period="2025-06-30", asset_rows=[asset_row("200")])
+    compared = compare_documents(left, right_same_period, plans)
+    assert compared["status"] == "MISMATCH"
+    assert compared["difference_count"] == 1
+
+
+def test_hydrate_investment_document_dates_backfills_period_end_from_portfolio_period():
+    from app.runtime import _hydrate_investment_document_dates
+
+    left, _ = _hydrate_investment_document_dates(
+        {"document_info": {"fund_name": "样本基金", "disclosure_date": "2025-11-24", "period_end": None}},
+        {"document_info": {"fund_name": "样本基金", "disclosure_date": "2025-07-21", "period_end": "2025-06-30"}},
+        {
+            "prospectus": {
+                "portfolio_period_end_interval": {"start": "2025-06-30", "end": "2025-06-30"},
+                "portfolio_period_end_quote": "投资组合报告截止日为2025年06月30日",
+            },
+            "periodic_report": {},
+        },
+    )
+    assert left["document_info"]["period_end"] == "2025-06-30"
+
+
+def test_evaluate_declared_context_accepts_same_batch_prospectus_send_date():
+    from app.comparison import evaluate_declared_context
+
+    plan = {
+        "comparison": {
+            "context_checks": [],
+            "context_checks_by_reference_role": {
+                "prospectus": [
+                    {
+                        "label": "招募说明书版本日期不晚于产品资料概要披露时点",
+                        "target_path": "document.metadata.compiled_date",
+                        "reference_path": "document.metadata.version_date",
+                        "operation": "reference_before_or_equal",
+                        "required": True,
+                    }
+                ]
+            },
+            "context_check_groups": [],
+        }
+    }
+    target = {"metadata": {"compiled_date": "2026-09-11", "sent_date": "2026-09-15"}}
+    same_batch_ref = {"metadata": {"version_date": "2026-09-15"}}
+    later_ref = {"metadata": {"version_date": "2026-09-20"}}
+
+    ok_same, _ = evaluate_declared_context(plan, target, same_batch_ref, reference_role="prospectus")
+    ok_later, _ = evaluate_declared_context(plan, target, later_ref, reference_role="prospectus")
+    assert ok_same is True
+    assert ok_later is False
+
+
+def test_no_data_matches_across_scope_variants_and_tolerates_accompanying_not_disclosed():
+    from app.comparison import _match_empty_disclosures
+
+    left_disclosures = [
+        {"status": "NO_DATA", "period_end": "2025-12-31", "scope": {"investment_scope": "all", "disclosure_scope": "all"}, "quote": "本基金本报告期末未持有股票。", "page": 10},
+        {"status": "NO_DATA", "period_end": "2025-12-31", "scope": {"investment_scope": "all", "disclosure_scope": "all"}, "quote": "本基金本报告期末未持有股票。", "page": 11},
+        {"status": "NOT_DISCLOSED", "period_end": "2025-12-31", "scope": {"investment_scope": "all", "disclosure_scope": "all"}, "quote": "无", "page": 12},
+    ]
+    right_disclosures = [
+        {"status": "NO_DATA", "period_end": "2025-12-31", "scope": {"investment_scope": "all", "disclosure_scope": "top_n", "limit": 10}, "quote": "本基金本报告期末未持有股票。", "page": 20},
+    ]
+    pairs = _match_empty_disclosures(
+        {"status": "EXTRACTED", "disclosures": left_disclosures},
+        {"status": "EXTRACTED", "disclosures": right_disclosures},
+        {"scope_fields": ["investment_scope"], "period_fields": ["period_end"]},
+    )
+    assert len(pairs) == 1
+    assert pairs[0][0]["status"] == "NO_DATA"
+    assert pairs[0][1]["status"] == "NO_DATA"
+
+
+def test_generic_compare_proceeds_with_rows_when_one_side_unresolved_structure():
+    _, plans, _ = load_investment_rule_definitions()
+    plan = dict(plans["investment.industry_stock_portfolio"])
+    row = lambda qty: {
+        "row_key": "C", "row_label": "制造业", "parent_key": None,
+        "industry_code": "C", "industry_name": "制造业", "market_scope": "境内", "investment_scope": "指数投资",
+        "row_evidence": {"status": "LOCATED", "page": 1, "quote": f"C 制造业 {qty}"},
+        "fields": {
+            "fair_value": {"raw_text": qty, "normalized_value": qty, "unit": "元", "evidence": {"status": "LOCATED", "page": 1, "quote": qty}},
+            "nav_ratio": {"raw_text": "10.00%", "normalized_value": "10.00", "unit": "%", "evidence": {"status": "LOCATED", "page": 1, "quote": "10.00%"}},
+        },
+    }
+    left_doc = document(disclosure="2026-03-01", period="2025-12-31")
+    right_doc = document(disclosure="2026-03-31", period="2025-12-31")
+    left_doc["modules"] = [{
+        "rule_id": "investment.industry_stock_portfolio",
+        "title": "行业股票", "status": "UNRESOLVED_STRUCTURE",
+        "rows": [row("100.00")], "disclosures": [], "source_warnings": ["部分合计行待确认"],
+    }]
+    right_doc["modules"] = [{
+        "rule_id": "investment.industry_stock_portfolio",
+        "title": "行业股票", "status": "EXTRACTED",
+        "rows": [row("200.00")], "disclosures": [], "source_warnings": [],
+    }]
+    result = compare_documents(left_doc, right_doc, {"investment.industry_stock_portfolio": plan})
+    module = result["modules"][0]
+    assert len(module["checks"]) == 2
+    assert any(c["status"] == "MISMATCH" and c["field_key"] == "fair_value" for c in module["checks"])
+    assert any(c["status"] == "MATCH" and c["field_key"] == "nav_ratio" for c in module["checks"])

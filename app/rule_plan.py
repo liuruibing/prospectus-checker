@@ -9,13 +9,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.domain import normalize_text
 
 PLAN_PROTOCOL_VERSION = 2
 _FIELD = re.compile(r"^[a-z][a-z0-9_]*$")
 _OPERATIONS = {"decimal", "identifier", "text", "date", "semantic", "equals"}
 _CONTEXT_OPERATIONS = _OPERATIONS | {"matches_target", "before_or_equal", "reference_before_or_equal", "within_days"}
 _MISMATCH_ACTIONS = {"block", "warn"}
-_POPULATIONS = {"target_document", "both_documents"}
+_POPULATIONS = {"target_document", "both_documents", "common_rows"}
 _ROLES = {"prospectus", "periodic_report", "product_summary"}
 _SOURCE_FACTS = {
     "primary.status", "primary.coverage", "primary.applicability",
@@ -76,6 +77,31 @@ def _dedupe_conditions(conditions: list[dict[str, str]]) -> list[dict[str, str]]
     return unique
 
 
+def _equivalence_groups(value: Any, path: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ExecutionPlanError(f"{path} 必须是列表")
+    groups = []
+    seen: set[str] = set()
+    for index, group in enumerate(value):
+        label = f"{path}[{index}]"
+        if not isinstance(group, dict):
+            raise ExecutionPlanError(f"{label} 必须是对象")
+        _only_keys(group, {"canonical_identity", "equivalent_labels"}, label)
+        canonical = _string(group.get("canonical_identity"), f"{label}.canonical_identity")
+        aliases = _string_list(group.get("equivalent_labels"), f"{label}.equivalent_labels")
+        if not aliases:
+            raise ExecutionPlanError(f"{label}.equivalent_labels 必须至少包含一个等价名称")
+        normalized = [normalize_text(alias) for alias in [canonical, *aliases]]
+        if len(normalized) != len(set(normalized)):
+            raise ExecutionPlanError(f"{label} 的规范身份及等价名称不能重复或为空")
+        overlap = seen.intersection(normalized)
+        if overlap:
+            raise ExecutionPlanError(f"{label} 与前面的等价组重复：" + ", ".join(sorted(overlap)))
+        seen.update(normalized)
+        groups.append({"canonical_identity": canonical, "equivalent_labels": aliases})
+    return groups
+
+
 def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) -> dict[str, Any]:
     """Validate and normalize a generic declarative rule execution plan.
 
@@ -100,7 +126,7 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
     if expected_identity is not None and identity != expected_identity:
         raise ExecutionPlanError("执行计划不能改变规则稳定身份")
     scope = _string(plan["rule_scope"], "rule_scope")
-    if scope not in {"investment", "product_summary"}:
+    if scope not in {"investment", "product_summary", "historical_performance"}:
         raise ExecutionPlanError(f"不支持的规则工作流：{scope}")
     target_role = _string(plan["target_role"], "target_role")
     if target_role not in _ROLES:
@@ -113,7 +139,7 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
     source_selection = plan["source_selection"]
     if not isinstance(source_selection, dict):
         raise ExecutionPlanError("source_selection 必须是对象")
-    _only_keys(source_selection, {"primary_role", "fallbacks"}, "source_selection")
+    _only_keys(source_selection, {"primary_role", "fallbacks", "reference_document_filters"}, "source_selection")
     primary_role = _string(source_selection.get("primary_role"), "source_selection.primary_role")
     if primary_role not in reference_roles:
         raise ExecutionPlanError("source_selection.primary_role 必须属于 reference_roles")
@@ -250,7 +276,7 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
         raise ExecutionPlanError("row_matching 必须是对象")
     _only_keys(matching, {
         "identity_description", "identity_fields", "identity_prefixes_to_ignore", "scope_fields", "required_scope_fields", "hierarchy_fields", "fallback_identity_fields",
-        "identity_headers", "identity_equivalence_groups", "target_population", "reference_superset_allowed",
+        "identity_headers", "identity_equivalence_groups", "scope_equivalence_groups", "target_population", "reference_superset_allowed",
         "require_complete_source_for_missing",
     }, "row_matching")
     _string(matching.get("identity_description"), "row_matching.identity_description")
@@ -285,28 +311,16 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
     # into the primary identity list so extraction and matching share one
     # generic schema without requiring the model to duplicate that declaration.
     identity_fields = list(dict.fromkeys([*identity_fields, *identity_header_map.keys()]))
-    raw_equivalence_groups = matching.get("identity_equivalence_groups", [])
-    if not isinstance(raw_equivalence_groups, list):
-        raise ExecutionPlanError("row_matching.identity_equivalence_groups 必须是列表")
-    equivalence_groups: list[dict[str, Any]] = []
-    seen_equivalence_labels: set[str] = set()
-    for index, group in enumerate(raw_equivalence_groups):
-        label = f"row_matching.identity_equivalence_groups[{index}]"
-        if not isinstance(group, dict):
-            raise ExecutionPlanError(f"{label} 必须是对象")
-        _only_keys(group, {"canonical_identity", "equivalent_labels"}, label)
-        canonical = _string(group.get("canonical_identity"), f"{label}.canonical_identity")
-        aliases = _string_list(group.get("equivalent_labels"), f"{label}.equivalent_labels")
-        if not aliases:
-            raise ExecutionPlanError(f"{label}.equivalent_labels 必须至少包含一个等价名称")
-        normalized_labels = [re.sub(r"\s+", "", alias).casefold() for alias in [canonical, *aliases]]
-        if any(not value for value in normalized_labels) or len(normalized_labels) != len(set(normalized_labels)):
-            raise ExecutionPlanError(f"{label} 的规范身份及等价名称不能重复或为空")
-        overlap = seen_equivalence_labels.intersection(normalized_labels)
-        if overlap:
-            raise ExecutionPlanError(f"{label} 与前面的等价组重复：" + ", ".join(sorted(overlap)))
-        seen_equivalence_labels.update(normalized_labels)
-        equivalence_groups.append({"canonical_identity": canonical, "equivalent_labels": aliases})
+    equivalence_groups = _equivalence_groups(
+        matching.get("identity_equivalence_groups", []), "row_matching.identity_equivalence_groups",
+    )
+    raw_scope_equivalences = matching.get("scope_equivalence_groups", {})
+    if not isinstance(raw_scope_equivalences, dict) or not raw_scope_equivalences.keys() <= set(scope_fields):
+        raise ExecutionPlanError("row_matching.scope_equivalence_groups 只能声明已有逐行范围字段的等价名称")
+    scope_equivalences = {
+        field: _equivalence_groups(groups, f"row_matching.scope_equivalence_groups.{field}")
+        for field, groups in raw_scope_equivalences.items()
+    }
     population = _string(matching.get("target_population"), "row_matching.target_population")
     if population not in _POPULATIONS:
         raise ExecutionPlanError(f"不支持的目标范围：{population}")
@@ -320,8 +334,11 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
         raise ExecutionPlanError("comparison 必须是对象")
     _only_keys(comparison, {
         "identity_description", "scope_conditions", "context_checks", "context_checks_by_reference_role",
-        "context_check_groups", "fields",
+        "context_check_groups", "fields", "calendar_year_window",
     }, "comparison")
+    year_window = comparison.get("calendar_year_window")
+    if year_window is not None and (type(year_window) is not int or year_window < 1):
+        raise ExecutionPlanError("comparison.calendar_year_window 必须是正整数")
     _string(comparison.get("identity_description"), "comparison.identity_description")
     fields = comparison.get("fields")
     if not isinstance(fields, list) or not fields:
@@ -533,6 +550,35 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
                 inspect(child, f"{path}[{index}]")
 
     inspect(plan)
+    filters = source_selection.get("reference_document_filters", [])
+    if not isinstance(filters, list):
+        raise ExecutionPlanError("source_selection.reference_document_filters 必须是列表")
+    normalized_filters = []
+    for index, item in enumerate(filters):
+        label = f"source_selection.reference_document_filters[{index}]"
+        if not isinstance(item, dict):
+            raise ExecutionPlanError(f"{label} 必须是对象")
+        _only_keys(item, {"role", "path", "operation", "value", "required"}, label)
+        role = _string(item.get("role"), f"{label}.role")
+        if role not in reference_roles:
+            raise ExecutionPlanError(f"{label}.role 必须属于 reference_roles")
+        path = _string(item.get("path"), f"{label}.path")
+        if not path.startswith("document."):
+            raise ExecutionPlanError(f"{label}.path 必须从 document. 开始")
+        operation = _string(item.get("operation"), f"{label}.operation")
+        if operation not in {"equals", "not_equals", "contains", "ends_with"}:
+            raise ExecutionPlanError(f"{label}.operation 不受支持：{operation}")
+        required = item.get("required")
+        if not isinstance(required, bool):
+            raise ExecutionPlanError(f"{label}.required 必须是布尔值")
+        normalized_filters.append({
+            "role": role, "path": path, "operation": operation,
+            "value": _string(item.get("value"), f"{label}.value"), "required": required,
+        })
+    filter_signatures = [(item["role"], item["path"], item["operation"], item["value"]) for item in normalized_filters]
+    if len(filter_signatures) != len(set(filter_signatures)):
+        raise ExecutionPlanError("source_selection.reference_document_filters 不能重复")
+
     return {
         **plan,
         "rule_identity": identity,
@@ -546,7 +592,8 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
             "preferred_sections": _string_list(search.get("preferred_sections"), "search_intent.preferred_sections"),
             "preferred_sections_by_role": normalized_role_sections,
         },
-        "source_selection": {"primary_role": primary_role, "fallbacks": merged_fallbacks},
+        "source_selection": {"primary_role": primary_role, "fallbacks": merged_fallbacks,
+                             "reference_document_filters": normalized_filters},
         "row_matching": {
             **matching,
             "identity_fields": identity_fields,
@@ -557,6 +604,7 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
             "fallback_identity_fields": fallback_fields,
             "identity_headers": identity_header_map,
             "identity_equivalence_groups": equivalence_groups,
+            **({"scope_equivalence_groups": scope_equivalences} if scope_equivalences else {}),
         },
         "comparison": {
             **comparison,
@@ -571,6 +619,38 @@ def validate_execution_plan(plan: Any, *, expected_identity: str | None = None) 
 def eligible_fallback_roles(plan: dict[str, Any], facts: dict[str, Any]) -> list[str]:
     """Return fallback roles whose rule-declared generic evidence conditions hold."""
     return [item["role"] for item in eligible_fallbacks(plan, facts)]
+
+
+def evaluate_reference_document_filters(
+    plan: dict[str, Any], role: str, document: dict[str, Any],
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Evaluate rule-declared document facts without interpreting their names."""
+    checks = [item for item in plan.get("source_selection", {}).get("reference_document_filters", [])
+              if item["role"] == role]
+    assessments = []
+    valid = True
+    for item in checks:
+        value: Any = document
+        for part in item["path"].split(".")[1:]:
+            if not isinstance(value, dict):
+                value = None
+                break
+            value = value.get(part)
+        if value in (None, ""):
+            matched = None
+        else:
+            actual, expected = str(value).strip().casefold(), item["value"].strip().casefold()
+            matched = {
+                "equals": lambda: actual == expected,
+                "not_equals": lambda: actual != expected,
+                "contains": lambda: expected in actual,
+                "ends_with": lambda: actual.endswith(expected),
+            }[item["operation"]]()
+        ok = matched is True or (matched is None and not item["required"])
+        assessments.append({"label": item["path"], "status": "MATCH" if ok else "UNRESOLVED",
+                            "value": value, "expected": item["value"]})
+        valid = valid and ok
+    return valid, assessments
 
 
 def eligible_fallbacks(plan: dict[str, Any], facts: dict[str, Any]) -> list[dict[str, str]]:
@@ -602,7 +682,7 @@ def eligible_fallbacks(plan: dict[str, Any], facts: dict[str, Any]) -> list[dict
         primary_confirmed = (
             str(facts.get("primary.status") or "").strip().casefold() == "found"
             and str(facts.get("primary.applicability") or "").strip().casefold() in {"confirmed", "not_required"}
-            and str(facts.get("primary.coverage") or "").strip().casefold() != "partial"
+            and str(facts.get("primary.coverage") or "").strip().casefold() not in {"partial", "not_found"}
         )
         candidate_review = (
             not primary_confirmed
